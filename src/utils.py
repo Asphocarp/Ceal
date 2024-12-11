@@ -492,7 +492,8 @@ def get_convs(model: nn.Module) -> List[Tuple[str, nn.Conv2d]]:
     not_mid_part = [i for i in ret if 'mid_block' not in i[0]]
     return [not_mid_part[0]] + mid_part + not_mid_part[1:] if not_mid_part else mid_part
 
-def get_pipe(conf: Config):
+def get_pipe(conf):
+    # conf: Config
     from diffusers import DiffusionPipeline, UNet2DConditionModel, LCMScheduler, \
         DPMSolverMultistepScheduler, StableDiffusionPipeline, DiTPipeline
     kwargs_from_pretrained = {
