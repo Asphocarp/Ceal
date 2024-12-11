@@ -2,10 +2,12 @@
 /.vscode/
 __pycache__
 
-*_ignore*
-gradio_cached_examples
-*.log
 .webui_secret_key
+gradio_cached_examples
+
+*_ignore*
+*.log
+*.pth
 
 /related
 /temp
