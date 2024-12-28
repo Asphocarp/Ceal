@@ -38,7 +38,7 @@ CUDA_VISIBLE_DEVICES=3 python probe.py
 '''
 
 # codename = 'more_H256_Az_B5'
-codename = 'S400_A0_B5'  # 512 points
+codename = 'S400_A10_B5'  # 512 points
 
 batch_size_top = 128  # will be times of the original batch size
 train_ratio = 0.8

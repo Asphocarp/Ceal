@@ -80,3 +80,39 @@ CUDA_VISIBLE_DEVICES="2" python dump_adv_act.py \
     --saving True
 # --codename auto \
 ```
+
+- temp to solve
+```shell
+CUDA_VISIBLE_DEVICES="2" python src/dump_adv_act.py \
+    --extractor pretrained/sstamp.torchscript.pt \
+    --img_size 400 \
+    --batch_size 4 \
+    --num_imgs 16 \
+    --msg_each 32 \
+    --msg_in_order True \
+    --norm_alpha 1 \
+    --norm_epsilon 40 \
+    --adapt_alpha_epsilon True \
+    --min_iter 1 \
+    --max_iter 150 \
+    --acc_thres 1 \
+    --split_pos 0 \
+    --bit_length 5 \
+    --store False \
+    --saving True \
+    | tee logs/S400_A0_B5.log
+```
+
+- debug:
+```shell
+# start server
+CUDA_VISIBLE_DEVICES="3" python scripts/debug_flask.py
+# send code
+scripts/debug_send_buffer.py -b buf
+```
+
+- probe.py: train a probe to classify the adv act
+```shell
+# TODO: choose model and size
+python src/probe.py
+```

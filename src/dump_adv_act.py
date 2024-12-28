@@ -474,13 +474,13 @@ def splitA(
     if act_index in (0, 1):
         aux = sample.detach()  # aux: the original input (of resnet)
         sample = self.mid_block.resnets[0](sample, None, maps=maps, split=('out', act_index))
-        return sample, aux
+        return sample
     sample = self.mid_block.resnets[0](sample, None, maps=maps)
     sample = self.mid_block.attentions[0](sample, temb=None)
     if act_index in (2, 3):
         aux = sample.detach()
         sample = self.mid_block.resnets[1](sample, None, maps=maps, split=('out', act_index-2))
-        return sample, aux
+        return sample
     sample = self.mid_block.resnets[1](sample, None, maps=maps)
     # done mid
     upscale_dtype = next(iter(self.up_blocks.parameters())).dtype
@@ -493,7 +493,7 @@ def splitA(
         if act_index in (4+i*2, 5+i*2):
             aux = sample.detach()
             sample = resnet(sample, None, maps=maps, split=('out', act_index%2))
-            return sample, aux
+            return sample
         sample = resnet(sample, None, maps=maps)
     sample = self.up_blocks[0].upsamplers[0](sample, maps=maps)
     # sample = self.up_blocks[1](sample, latent_embeds, maps=maps)
@@ -502,7 +502,7 @@ def splitA(
         if act_index in (10+i*2, 11+i*2):
             aux = sample.detach()
             sample = resnet(sample, None, maps=maps, split=('out', act_index%2))
-            return sample, aux
+            return sample
         sample = resnet(sample, None, maps=maps)
     sample = self.up_blocks[1].upsamplers[0](sample, maps=maps)
     # sample = self.up_blocks[2](sample, latent_embeds, maps=maps)
@@ -511,7 +511,7 @@ def splitA(
         if act_index in (16+i*2, 17+i*2):
             aux = sample.detach()
             sample = resnet(sample, None, maps=maps, split=('out', act_index%2))
-            return sample, aux
+            return sample
         sample = resnet(sample, None, maps=maps)
     sample = self.up_blocks[2].upsamplers[0](sample, maps=maps)
     # sample = self.up_blocks[3](sample, latent_embeds, maps=maps)
@@ -520,7 +520,7 @@ def splitA(
         if act_index in (22+i*2, 23+i*2):
             aux = sample.detach()
             sample = resnet(sample, None, maps=maps, split=('out', act_index%2))
-            return sample, aux
+            return sample
         sample = resnet(sample, None, maps=maps)
     # no upsampler in up_blocks[3]
 
@@ -767,7 +767,7 @@ for step, z in tqdm(enumerate(train_loader),
             if i > MIN_ITER and torch.mean(bit_accs.type(torch.float)).item() >= ACC_THRES:
                 failed = False
                 break
-            lossw.backward()
+            lossw.backward(retain_graph=True)  # TODO why retain_graph is needed for aux
             grad = act_adv.grad.data.clone().detach()
             act_adv.grad.data.zero_()
             # l2 step
