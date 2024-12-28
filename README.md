@@ -13,7 +13,7 @@ mamba install omegaconf accelerate deepspeed --yes
 pip install augly UltraDict gradio
 pip install transformers --force-reinstall
 pip install lpips pycocotools pytorch_fid gradio einops wandb python-dotenv scikit-image scikit-learn 
-pip install kornia
+pip install kornia flask
 ```
 
 
@@ -43,7 +43,7 @@ python scripts/dump_model_adv_act.py \
 
 - dump_adv_act.py: dump some adv act from a layer
 ```shell
-CUDA_VISIBLE_DEVICES="3" python dump_adv_act.py \
+CUDA_VISIBLE_DEVICES="0" python src/dump_adv_act.py \
     --extractor pretrained/dec_48b_whit.torchscript.pt \
     --img_size 256 \
     --batch_size 4 \
@@ -61,7 +61,7 @@ CUDA_VISIBLE_DEVICES="3" python dump_adv_act.py \
     --store False \
     --saving True
 
-CUDA_VISIBLE_DEVICES="2" python dump_adv_act.py \
+CUDA_VISIBLE_DEVICES="2" python src/dump_adv_act.py \
     --extractor pretrained/dec_48b_whit.torchscript.pt \
     --img_size 256 \
     --batch_size 4 \
