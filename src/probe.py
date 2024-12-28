@@ -23,39 +23,34 @@ def timer(name='Task'):
     print(f'{name} completed in {elapsed_time:.2f} seconds ({elapsed_time/60:.2f} minutes)')
 
 
+# %%==================== Config ====================
 parser = argparse.ArgumentParser()
-parser.add_argument("--config", type=str, default="./configs/current.yaml")
+parser.add_argument("--codename", type=str, default="S400_A0_B5")
+parser.add_argument("--train_ratio", type=float, default=0.8)
+parser.add_argument("--data_dir", type=str, default="output_turbo/")
 args, unknown = parser.parse_known_args()
+
+# >> rename
+DATA_DIR = args.data_dir
+CODENAME = args.codename
+TRAIN_RATIO = args.train_ratio
+# bit_length = 5  # currently decided by the source data
+
+# >> handler
+desired_feature_size = None  # deprecated
+dropout_ratio = 0.0  # deprecated
 utils.seed_everything(42)
 torch.cuda.empty_cache()
-# device = 'cuda'
-output_dir = f'output_turbo/'
 
-
-# %%==================== Config ====================
-'''
-CUDA_VISIBLE_DEVICES=3 python probe.py
-'''
-
-# codename = 'more_H256_Az_B5'
-codename = 'S400_A10_B5'  # 512 points
-
-batch_size_top = 128  # will be times of the original batch size
-train_ratio = 0.8
-# bit_length = 5  # None for full bit length
-bit_length = 5  # None for full bit length
-
-desired_feature_size = None  # none for ori, FIXME using Dropout now
-dropout_ratio = 0.0
 
 # %%==================== Find input folder ====================
-# find the most recent folder in output_dir with this codename included
-folders = [f for f in os.listdir(output_dir) if os.path.isdir(os.path.join(output_dir, f)) and codename in f]
+# find the most recent folder in DATA_DIR with this codename included
+folders = [f for f in os.listdir(DATA_DIR) if os.path.isdir(os.path.join(DATA_DIR, f)) and CODENAME in f]
 folders.sort(reverse=True)  # Sort to get most recent first (as I named them like 20241029_123456)
 if not folders:
-    raise ValueError(f"No folder found containing '{codename}'")
+    raise ValueError(f"No folder found containing '{CODENAME}'")
 folder_name = folders[0]
-input_dir = os.path.join(output_dir, folder_name)
+input_dir = os.path.join(DATA_DIR, folder_name)
 print(f"> Found input folder: {input_dir}")
 # count the number of files in the input_dir/store
 store_dir = os.path.join(input_dir, 'saving')
@@ -149,7 +144,7 @@ print(f"Total data samples: X.shape = {X.shape}, y.shape = {y.shape}")
 #     y = y[idx]
 
 # Split data into training and validation sets
-X_train, X_val, y_train, y_val = train_test_split(X, y, train_size=train_ratio, random_state=42)
+X_train, X_val, y_train, y_val = train_test_split(X, y, train_size=TRAIN_RATIO, random_state=42)
 
 # base config
 base_model = LogisticRegression(
