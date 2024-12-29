@@ -14,3 +14,5 @@ gradio_cached_examples
 /outputs
 /wandb
 /pretrained
+/output_ark
+/output_turbo
