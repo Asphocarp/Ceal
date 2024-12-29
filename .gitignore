@@ -12,7 +12,7 @@ gradio_cached_examples
 /related
 /temp
 /outputs
-/wandb
-/pretrained
 /output_ark
 /output_turbo
+/wandb
+/pretrained
