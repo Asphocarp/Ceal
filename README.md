@@ -101,3 +101,26 @@ python scripts/train_probes.py \
     --bit_length 5 \
     --data_dir output_turbo/
 ```
+
+
+- latest:
+```shell
+CUDA_VISIBLE_DEVICES="0" python src/dump_adv_act.py \
+    --extractor pretrained/dec_48b_whit.torchscript.pt \
+    --img_size 256 \
+    --batch_size 2 \
+    --num_imgs 6400 \
+    --msg_each 1 \
+    --msg_in_order False \
+    --norm_alpha 1 \
+    --norm_epsilon 8 \
+    --adapt_alpha_epsilon False \
+    --min_iter 1 \
+    --max_iter 150 \
+    --acc_thres 1 \
+    --split_pos z \
+    --bit_length 32 \
+    --store False \
+    --model_id stabilityai/sdxl-turbo \
+    --saving True
+```

@@ -57,6 +57,8 @@ parser.add_argument("--store_limit", type=str, default='inf',
                     help="inf for no limit, number for x gb")
 # parser.add_argument("--ark_dir", type=str, default='output_ark')
 parser.add_argument("--ark_dir", type=str, default='output_turbo')
+# or '/home/asc/repo/cache/sdxl-turbo'
+parser.add_argument("--model_id", type=str, default='stabilityai/sdxl-turbo')
 args, unknown = parser.parse_known_args()
 
 CODENAME = args.codename
@@ -78,9 +80,9 @@ STORE = args.store
 SAVING = args.saving
 STORE_LIMIT = args.store_limit
 ARK_DIR = args.ark_dir
+MODEL_ID = args.model_id
 
 # TODO the more default
-MODEL_ID = '/home/asc/repo/cache/sdxl-turbo'
 TORCH_DTYPE = torch.float32
 TORCH_DTYPE_STR = 'float32'
 LOCAL_FILES_ONLY = True
