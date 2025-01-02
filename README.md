@@ -123,4 +123,68 @@ CUDA_VISIBLE_DEVICES="0" python src/dump_adv_act.py \
     --store False \
     --model_id stabilityai/sdxl-turbo \
     --saving True
+
+CUDA_VISIBLE_DEVICES="0" python src/dump_adv_act.py \
+    --extractor pretrained/dec_48b_whit.torchscript.pt \
+    --img_size 256 \
+    --batch_size 8 \
+    --num_imgs 6400 \
+    --msg_each 1 \
+    --msg_in_order False \
+    --norm_alpha 1 \
+    --norm_epsilon 8 \
+    --adapt_alpha_epsilon False \
+    --min_iter 1 \
+    --max_iter 150 \
+    --acc_thres 1 \
+    --split_pos 29 \
+    --bit_length 32 \
+    --store False \
+    --model_id stabilityai/sdxl-turbo \
+    --saving True
+
+# 28
+CUDA_VISIBLE_DEVICES="0" python src/dump_adv_act.py \
+    --extractor pretrained/dec_48b_whit.torchscript.pt \
+    --img_size 256 \
+    --batch_size 8 \
+    --num_imgs 64000 \
+    --msg_each 1 \
+    --msg_in_order False \
+    --norm_alpha 1 \
+    --norm_epsilon 8 \
+    --adapt_alpha_epsilon False \
+    --min_iter 1 \
+    --max_iter 150 \
+    --acc_thres 1 \
+    --split_pos 28 \
+    --bit_length 16 \
+    --store False \
+    --model_id stabilityai/sdxl-turbo \
+    --saving True | tee logs/A28each1.log
+
+CUDA_VISIBLE_DEVICES="1" python src/dump_adv_act.py \
+    --extractor pretrained/dec_48b_whit.torchscript.pt \
+    --img_size 256 \
+    --batch_size 8 \
+    --num_imgs 6400 \
+    --msg_each 8 \
+    --msg_in_order False \
+    --norm_alpha 1 \
+    --norm_epsilon 8 \
+    --adapt_alpha_epsilon False \
+    --min_iter 1 \
+    --max_iter 150 \
+    --acc_thres 1 \
+    --split_pos 29 \
+    --bit_length 32 \
+    --store False \
+    --model_id stabilityai/sdxl-turbo \
+    --saving True | tee logs/A29each8.log
+
+python src/probe.py --codename H256_Az_B32 --bit_limit 5
+
+python src/probe.py --codename H256_A029_B32 --bit_limit 1
+
+python src/probe.py --codename H256_A28_B16 --bit_limit 1 --njobs 2 --mem_limit 100
 ```

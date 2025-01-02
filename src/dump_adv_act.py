@@ -5,6 +5,7 @@ import gc
 from typing import *
 import utils_img
 import utils
+from utils import str2bool
 from torchvision import transforms
 import torch
 from copy import deepcopy
@@ -18,15 +19,6 @@ from tqdm import tqdm
 import time
 
 
-def str2bool(v):
-    if isinstance(v, bool):
-        return v
-    if v.lower() in ('yes', 'true', 't', 'y', '1'):
-        return True
-    elif v.lower() in ('no', 'false', 'f', 'n', '0'):
-        return False
-    else:
-        raise argparse.ArgumentTypeError('Boolean value expected.')
 parser = argparse.ArgumentParser()
 parser.add_argument("--config", type=str, default="./configs/current.yaml")
 args, unknown = parser.parse_known_args()
@@ -532,7 +524,7 @@ def splitA(
     if act_index == 28:
         return sample
     sample = self.conv_out(sample, maps=maps)
-    return sample  # 'image'
+    return sample   # act_index is 29, aka 'image'
 
 def splitB(
     self, sample: torch.FloatTensor, aux: torch.FloatTensor = None,
@@ -614,8 +606,9 @@ def splitB(
     if act_index < 28:
         sample = self.conv_norm_out(sample)
         sample = self.conv_act(sample)
-    sample = self.conv_out(sample, maps=maps)
-    return sample  # 'image'
+    if act_index < 29:
+        sample = self.conv_out(sample, maps=maps)
+    return sample  # act_index is 29, aka 'image'
 
 
 # after z
