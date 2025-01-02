@@ -10,6 +10,7 @@ import torch.nn as nn
 # from timm.models import vision_transformer
 
 import attenuations
+from transformers import CLIPModel
 
 
 class ConvBNRelu(nn.Module):
@@ -98,6 +99,60 @@ class HiddenDecoder(nn.Module):
         x = x.squeeze(-1).squeeze(-1)  # b d
         x = self.linear(x)  # b d
         return x
+
+class HidDec(nn.Module):
+    def __init__(self, hids, width, nbit, device=None):
+        super().__init__()
+        self.clip = CLIPModel.from_pretrained(
+            "openai/clip-vit-base-patch32",
+            local_files_only=True,
+        ).to(device)
+        self.clip.eval()
+        lins = nn.ModuleList([nn.Linear(width, nbit, bias=False) for _ in range(hids)])
+        self.weights = nn.Parameter(torch.stack([layer.weight for layer in lins]), requires_grad=True).to(device)
+        self.bias = nn.Parameter(torch.zeros(nbit), requires_grad=True).to(device)
+    
+    def last_cls(self, x):
+        hidden_states = self.clip.vision_model.embeddings(x)
+        hidden_states = self.clip.vision_model.pre_layrnorm(hidden_states)
+        encoder_outputs = self.clip.vision_model.encoder(
+            inputs_embeds=hidden_states,
+        )
+        last_hidden_state = encoder_outputs[0]
+        # 0 for [CLS]. A [CLS] token is added to serve as representation of an entire image. see https://huggingface.co/docs/transformers/en/model_doc/clip.
+        last_cls = last_hidden_state[:, 0, :]
+        return last_cls  # [N, D]
+
+    def dec_and_last_cls(self, x):
+        hidden_states = self.clip.vision_model.embeddings(x)
+        hidden_states = self.clip.vision_model.pre_layrnorm(hidden_states)
+        encoder_outputs = self.clip.vision_model.encoder(
+            inputs_embeds=hidden_states,
+            output_hidden_states=True,
+        )
+        all_hidden_states = torch.stack(encoder_outputs[1])
+        # 0 for [CLS]. A [CLS] token is added to serve as representation of an entire image. see https://huggingface.co/docs/transformers/en/model_doc/clip.
+        hid_cls = all_hidden_states[:, :, 0, :]  # LND
+        hid_cls = hid_cls.permute(1, 0, 2)  # LND -> NLD [N, 12, 768]
+        # normalize (layernorm)
+        norm_factor = torch.sqrt(torch.sum(hid_cls**2, dim=2, keepdim=True))
+        norm_hid_cls = hid_cls / (norm_factor + 1e-6)
+        # pass through linear layers
+        mul = torch.einsum('nci, coi -> nco', norm_hid_cls, self.weights)  # [N, 12, 48]
+        avg = torch.mean(mul, dim=1)  # [N, 48]
+        return avg + self.bias, hid_cls[:, -1, :]  # [N, 48], [N, 768]
+
+    def forward(self, x):
+        msg, _ = self.dec_and_last_cls(x)
+        return msg
+    
+    # # TODO use clip as loss-i dist!
+    # def forward(self, x, x_w):
+    #     msg, lc_w = self.dec_and_last_cls(x_w)
+    #     lc = self.last_cls(x)
+    #     # lpips-like distance, l2 norm
+    #     dist = torch.norm(lc_w - lc, dim=-1)
+    #     return msg, dist
 
 
 class ImgEmbed(nn.Module):

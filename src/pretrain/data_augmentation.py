@@ -89,10 +89,14 @@ class HiddenAug(nn.Module):
         hflip = K.RandomHorizontalFlip(p=1)
         augmentations += [nn.Identity(), hflip]
         if p_crop > 0:
-            crop1 = int(img_size * np.sqrt(0.3))
-            crop2 = int(img_size * np.sqrt(0.7))
-            crop1 = K.RandomCrop(size=(crop1, crop1), p=1)  # Crop 0.3
-            crop2 = K.RandomCrop(size=(crop2, crop2), p=1)  # Crop 0.7
+            # crop1 = int(img_size * np.sqrt(0.3))
+            # crop2 = int(img_size * np.sqrt(0.7))
+            # crop1 = K.RandomCrop(size=(crop1, crop1), p=1)  # Crop 0.3
+            # crop2 = K.RandomCrop(size=(crop2, crop2), p=1)  # Crop 0.7
+            # Crop 0.3
+            crop1 = K.RandomResizedCrop(size=(img_size, img_size), scale=(0.3, 0.3), p=1)
+            # Crop 0.7
+            crop2 = K.RandomResizedCrop(size=(img_size, img_size), scale=(0.7, 0.7), p=1)
             augmentations += [crop1, crop2]
         if p_res > 0:
             res1 = int(img_size * np.sqrt(0.3))
