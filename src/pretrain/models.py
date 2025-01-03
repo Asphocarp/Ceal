@@ -142,8 +142,27 @@ class HidDec(nn.Module):
         avg = torch.mean(mul, dim=1)  # [N, 48]
         return avg + self.bias, hid_cls[:, -1, :]  # [N, 48], [N, 768]
 
+    def dec(self, x):
+        hidden_states = self.clip.vision_model.embeddings(x)
+        hidden_states = self.clip.vision_model.pre_layrnorm(hidden_states)
+        encoder_outputs = self.clip.vision_model.encoder(
+            inputs_embeds=hidden_states,
+            output_hidden_states=True,
+        )
+        all_hidden_states = torch.stack(encoder_outputs[1])
+        # 0 for [CLS]. A [CLS] token is added to serve as representation of an entire image. see https://huggingface.co/docs/transformers/en/model_doc/clip.
+        hid_cls = all_hidden_states[:, :, 0, :]  # LND
+        hid_cls = hid_cls.permute(1, 0, 2)  # LND -> NLD [N, 12, 768]
+        # normalize (layernorm)
+        norm_factor = torch.sqrt(torch.sum(hid_cls**2, dim=2, keepdim=True))
+        norm_hid_cls = hid_cls / (norm_factor + 1e-6)
+        # pass through linear layers
+        mul = torch.einsum('nci, coi -> nco', norm_hid_cls, self.weights)  # [N, 12, 48]
+        avg = torch.mean(mul, dim=1)  # [N, 48]
+        return avg + self.bias
+
     def forward(self, x):
-        msg, _ = self.dec_and_last_cls(x)
+        msg = self.dec(x)
         return msg
     
     # # TODO use clip as loss-i dist!

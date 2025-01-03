@@ -72,7 +72,7 @@ def get_parser():
     group = parser.add_argument_group('Experiments parameters')
     aa("--train_dir", type=str, default="/checkpoint/pfz/watermarking/data/train_coco_10k_orig/0")
     aa("--val_dir", type=str, default="/checkpoint/pfz/watermarking/data/coco_1k_orig/0")
-    aa("--output_dir", type=str, default="output/", help="Output directory for logs and images (Default: /output)")
+    aa("--output_dir", type=str, default="output/", help="Output directory for logs and images (Default: /output_turbo)")
 
     group = parser.add_argument_group('Marking parameters')
     aa("--num_bits", type=int, default=32, help="Number of bits of the watermark (Default: 32)")
@@ -141,6 +141,7 @@ def get_parser():
 
 
 def main(params: argparse.Namespace):
+    wandb.init(project="HidDec", config=params.__dict__)
     # accelerator.init_trackers(
     #     project_name="HiDDeN",
     #     config=params.__dict__
@@ -203,7 +204,7 @@ def main(params: argparse.Namespace):
 
     # Construct attenuation
     if params.attenuation == 'jnd':
-        attenuation = attenuations.JND(preprocess = lambda x: utils_img.unnormalize_rgb(x)).to(device)
+        attenuation = attenuations.JND(preprocess = lambda x: utils_img.unnormalize_img(x)).to(device)
     else:
         attenuation = None
 
@@ -240,13 +241,13 @@ def main(params: argparse.Namespace):
         transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.1),
         transforms.RandomHorizontalFlip(),
         transforms.ToTensor(),
-        utils_img.normalize_rgb,
+        utils_img.normalize_img,
     ])
     val_transform = transforms.Compose([
         transforms.Resize(params.img_size),
         transforms.CenterCrop(params.img_size),
         transforms.ToTensor(),
-        utils_img.normalize_rgb,
+        utils_img.normalize_img,
         ])
     train_loader = utils.get_dataloader(params.train_dir, transform=train_transform, batch_size=params.batch_size, num_workers=params.workers, shuffle=True)
     val_loader = utils.get_dataloader(params.val_dir, transform=val_transform,  batch_size=params.batch_size_eval, num_workers=params.workers, shuffle=False)
@@ -356,7 +357,7 @@ def train_one_epoch(encoder_decoder: models.EncoderDecoder, loader, optimizer, s
     for it, (imgs, _) in enumerate(metric_logger.log_every(loader, 10, header)):
         imgs = imgs.to(device, non_blocking=True) # b c h w
 
-        # !  k: bit_num 
+        # k: bit_num 
         msgs_ori = torch.rand((imgs.shape[0], params.num_bits)) > 0.5 # b k
         # TODO whats use of this?
         msgs = 2 * msgs_ori.type(torch.float).to(device) - 1 # b k
@@ -384,26 +385,27 @@ def train_one_epoch(encoder_decoder: models.EncoderDecoder, loader, optimizer, s
         word_accs = (bit_accs == 1) # b
         norm = torch.norm(fts, dim=-1, keepdim=True) # b d -> b 1
         log_stats = {
-            'loss_w': loss_w.item(),
-            'loss_i': loss_i.item(),
-            'loss': (params.lambda_w*loss_w + params.lambda_i*loss_i).item(),
-            'psnr_avg': torch.mean(psnrs).item(),
-            'lr': optimizer.param_groups[0]['lr'],
-            'bit_acc_avg': torch.mean(bit_accs).item(),
-            'word_acc_avg': torch.mean(word_accs.type(torch.float)).item(),
-            'norm_avg': torch.mean(norm).item(),
+            'train/loss_w': loss_w.item(),
+            'train/loss_i': loss_i.item(),
+            'train/loss': (params.lambda_w*loss_w + params.lambda_i*loss_i).item(),
+            'train/psnr_avg': torch.mean(psnrs).item(),
+            'train/lr': optimizer.param_groups[0]['lr'],
+            'train/bit_acc_avg': torch.mean(bit_accs).item(),
+            'train/word_acc_avg': torch.mean(word_accs.type(torch.float)).item(),
+            'train/norm_avg': torch.mean(norm).item(),
         }
         
         for name, loss in log_stats.items():
             metric_logger.update(**{name:loss})
         # accelerator.log(log_stats)
-        # wandb.log(log_stats)
+        wandb.log(log_stats)
         
         # if epoch % 1 == 0 and it % 10 == 0 and utils.is_main_process():
-        if epoch % params.saveimg_freq == 0 and it == 0:
-            save_image(utils_img.unnormalize_img(imgs), os.path.join(params.output_dir, f'{epoch:03}_{it:03}_train_ori.png'), nrow=8)
-            save_image(utils_img.unnormalize_img(imgs_w), os.path.join(params.output_dir, f'{epoch:03}_{it:03}_train_w.png'), nrow=8)
-            save_image(utils_img.unnormalize_img(imgs_aug), os.path.join(params.output_dir, f'{epoch:03}_{it:03}_train_aug.png'), nrow=8)
+        # if epoch % params.saveimg_freq == 0 and it == 0:
+        if it % params.saveimg_freq == 0:
+            save_image(utils_img.unnormalize_img(imgs), os.path.join(params.output_dir, f'{epoch:03}_{it:04}_train_ori.png'), nrow=8)
+            save_image(utils_img.unnormalize_img(imgs_w), os.path.join(params.output_dir, f'{epoch:03}_{it:04}_train_w.png'), nrow=8)
+            save_image(utils_img.unnormalize_img(imgs_aug), os.path.join(params.output_dir, f'{epoch:03}_{it:04}_train_aug.png'), nrow=8)
 
     print("Averaged {} stats:".format('train'), metric_logger)
     return {k: meter.global_avg for k, meter in metric_logger.meters.items()}
@@ -440,40 +442,43 @@ def eval_one_epoch(encoder_decoder: models.EncoderDecoder, loader, epoch, params
         word_accs = (bit_accs == 1) # b
         norm = torch.norm(fts, dim=-1, keepdim=True) # b d -> b 1
         log_stats = {
-            'val_loss_w': loss_w.item(),
-            'val_loss_i': loss_i.item(),
-            'val_loss': loss.item(),
-            'val_psnr_avg': torch.mean(psnrs).item(),
-            'val_bit_acc_avg': torch.mean(bit_accs).item(),
-            'val_word_acc_avg': torch.mean(word_accs.type(torch.float)).item(),
-            'val_norm_avg': torch.mean(norm).item(),
+            'validate/loss_w': loss_w.item(),
+            'validate/loss_i': loss_i.item(),
+            'validate/loss': loss.item(),
+            'validate/psnr_avg': torch.mean(psnrs).item(),
+            'validate/bit_acc_avg': torch.mean(bit_accs).item(),
+            'validate/word_acc_avg': torch.mean(word_accs.type(torch.float)).item(),
+            'validate/norm_avg': torch.mean(norm).item(),
         }
 
         attacks = {
             'none': lambda x: x,
-            'crop_01': lambda x: utils_img.center_crop(x, 0.1),
-            'crop_05': lambda x: utils_img.center_crop(x, 0.5),
+            # ! resized back to original size
+            'crop_01': lambda x: utils_img.resized_center_crop(x, 0.1),
+            'crop_05': lambda x: utils_img.resized_center_crop(x, 0.5),
             # 'resize_03': lambda x: utils_img.resize(x, 0.3),
-            'resize_05': lambda x: utils_img.resize(x, 0.5),
+            # 'resize_05': lambda x: utils_img.resize(x, 0.5),
             'rot_25': lambda x: utils_img.rotate(x, 25),
             'rot_90': lambda x: utils_img.rotate(x, 90),
             'blur': lambda x: utils_img.gaussian_blur(x, sigma=2.0),
-            # 'brightness_2': lambda x: utils_img.adjust_brightness(x, 2),
+            'brightness_2': lambda x: utils_img.adjust_brightness(x, 2),
             'jpeg_50': lambda x: utils_img.jpeg_compress(x, 50),
         }
         for name, attack in attacks.items():
             fts, (_) = encoder_decoder(imgs, msgs, eval_mode=True, eval_aug=attack)
             decoded_msgs = torch.sign(fts) > 0 # b k -> b k
             diff = (~torch.logical_xor(ori_msgs, decoded_msgs)) # b k -> b k
-            log_stats[f'bit_acc_{name}'] = diff.float().mean().item()
+            log_stats[f'validate/bit_acc_{name}'] = diff.float().mean().item()
 
         for name, loss in log_stats.items():
             metric_logger.update(**{name:loss})
         # accelerator.log(log_stats)
+        wandb.log(log_stats)
         
-        if epoch % params.saveimg_freq == 0 and it == 0:
-            save_image(utils_img.unnormalize_img(imgs), os.path.join(params.output_dir, f'{epoch:03}_{it:03}_val_ori.png'), nrow=8)
-            save_image(utils_img.unnormalize_img(imgs_w), os.path.join(params.output_dir, f'{epoch:03}_{it:03}_val_w.png'), nrow=8)
+        # if epoch % params.saveimg_freq == 0 and it == 0:
+        if it % params.saveimg_freq == 0:
+            save_image(utils_img.unnormalize_img(imgs), os.path.join(params.output_dir, f'{epoch:03}_{it:04}_val_ori.png'), nrow=8)
+            save_image(utils_img.unnormalize_img(imgs_w), os.path.join(params.output_dir, f'{epoch:03}_{it:04}_val_w.png'), nrow=8)
 
     print("Averaged {} stats:".format('eval'), metric_logger)
     return {k: meter.global_avg for k, meter in metric_logger.meters.items()}

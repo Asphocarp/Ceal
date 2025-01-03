@@ -34,6 +34,10 @@ normalize_img = transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[
 unnormalize_img = transforms.Normalize(mean=[-0.485/0.229, -0.456/0.224, -0.406/0.225], std=[
                                        1/0.229, 1/0.224, 1/0.225])  # Unnormalize (x * std) + mean
 
+normalize_yuv = transforms.Normalize(mean=[0.5, 0, 0], std=[0.5, 1, 1])
+unnormalize_yuv = transforms.Normalize(
+    mean=[-0.5/0.5, 0, 0], std=[1/0.5, 1/1, 1/1])
+
 
 def psnr(x, y, img_space='vqgan'):
     """ 
@@ -66,6 +70,14 @@ def center_crop(x, scale):
     scale = np.sqrt(scale)
     new_edges_size = [int(s*scale) for s in x.shape[-2:]][::-1]
     return functional.center_crop(x, new_edges_size)
+
+
+def resized_center_crop(x, scale):
+    '''Remain original size'''
+    scale = np.sqrt(scale)
+    new_edges_size = [int(s*scale) for s in x.shape[-2:]][::-1]
+    top, left = (x.shape[-2] - new_edges_size[0]) // 2, (x.shape[-1] - new_edges_size[1]) // 2
+    return functional.resized_crop(x, top, left, new_edges_size[0], new_edges_size[1], x.shape[-2:])
 
 
 def resize(x, scale):

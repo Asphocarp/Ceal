@@ -27,6 +27,7 @@ import pandas as pd
 from torchvision.io import read_image
 from skimage import io
 from pathlib import Path
+import argparse
 
 
 def str2bool(v):
@@ -425,6 +426,20 @@ def get_sha():
     message = f"sha: {sha}, status: {diff}, branch: {branch}"
     return message
 
+def get_hidden_decoder(num_bits, redundancy=1, num_blocks=7, 
+                       channels=64, track_running_stats=True):
+    from pretrain.models import HiddenDecoder
+    decoder = HiddenDecoder(num_blocks=num_blocks, num_bits=num_bits,
+                            channels=channels, redundancy=redundancy,
+                            track_running_stats=track_running_stats)
+    return decoder
+
+
+def get_hidden_decoder_ckpt(ckpt_path):
+    ckpt = torch.load(ckpt_path, map_location="cpu")
+    decoder_ckpt = {k.replace('module.', '').replace(
+        'decoder.', ''): v for k, v in ckpt['encoder_decoder'].items() if 'decoder' in k}
+    return decoder_ckpt
 
 ### NEW
 

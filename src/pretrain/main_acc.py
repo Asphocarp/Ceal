@@ -52,16 +52,16 @@ import data_augmentation
 import models
 import attenuations
 
-# from accelerate import Accelerator
-import wandb
-device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
+from accelerate import Accelerator
+# import wandb
+# device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
 
-# accelerator = Accelerator(
-#     log_with='wandb',
-#     split_batches=False,
-#     step_scheduler_with_optimizer=False,
-# )
-# device = accelerator.device
+accelerator = Accelerator(
+    log_with='wandb',
+    split_batches=False,
+    step_scheduler_with_optimizer=False,
+)
+device = accelerator.device
 
 def get_parser():
     parser = argparse.ArgumentParser()
@@ -141,12 +141,12 @@ def get_parser():
 
 
 def main(params: argparse.Namespace):
-    # accelerator.init_trackers(
-    #     project_name="HiDDeN",
-    #     config=params.__dict__
-    # )
-    # WORLD_SIZE = accelerator.num_processes
-    WORLD_SIZE = 1
+    accelerator.init_trackers(
+        project_name="HidDec",
+        config=params.__dict__
+    )
+    WORLD_SIZE = accelerator.num_processes
+    # WORLD_SIZE = 1
 
     # cudnn.benchmark = False
     # cudnn.deterministic = True
@@ -277,9 +277,9 @@ def main(params: argparse.Namespace):
     start_time = time.time()
     best_bit_acc = 0
 
-    # train_loader, val_loader, optimizer, scheduler, encoder_decoder = accelerator.prepare(
-    #     train_loader, val_loader, optimizer, scheduler, encoder_decoder
-    # )
+    train_loader, val_loader, optimizer, scheduler, encoder_decoder = accelerator.prepare(
+        train_loader, val_loader, optimizer, scheduler, encoder_decoder
+    )
 
     for epoch in range(start_epoch, params.epochs):
 
@@ -290,8 +290,8 @@ def main(params: argparse.Namespace):
             val_stats = eval_one_epoch(encoder_decoder, val_loader, epoch, params)
             log_stats = {**log_stats, **{f'val_{k}': v for k, v in val_stats.items()}}
     
-        # if accelerator.is_main_process:
-        if True:
+        if accelerator.is_main_process:
+        # if True:
             save_dict = {
                 'encoder_decoder': encoder_decoder.state_dict(),
                 'optimizer': optimizer.state_dict(),
@@ -369,8 +369,8 @@ def train_one_epoch(encoder_decoder: models.EncoderDecoder, loader, optimizer, s
         loss += params.lambda_w*loss_w + params.lambda_i*loss_i
 
         # gradient step
-        loss.backward()
-        # accelerator.backward(loss)
+        # loss.backward()
+        accelerator.backward(loss)
         optimizer.step()
         optimizer.zero_grad()
 
@@ -396,7 +396,7 @@ def train_one_epoch(encoder_decoder: models.EncoderDecoder, loader, optimizer, s
         
         for name, loss in log_stats.items():
             metric_logger.update(**{name:loss})
-        # accelerator.log(log_stats)
+        accelerator.log(log_stats)
         # wandb.log(log_stats)
         
         # if epoch % 1 == 0 and it % 10 == 0 and utils.is_main_process():
@@ -469,7 +469,7 @@ def eval_one_epoch(encoder_decoder: models.EncoderDecoder, loader, epoch, params
 
         for name, loss in log_stats.items():
             metric_logger.update(**{name:loss})
-        # accelerator.log(log_stats)
+        accelerator.log(log_stats)
         
         if epoch % params.saveimg_freq == 0 and it == 0:
             save_image(utils_img.unnormalize_img(imgs), os.path.join(params.output_dir, f'{epoch:03}_{it:03}_val_ori.png'), nrow=8)
