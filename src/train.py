@@ -524,21 +524,21 @@ def main(args):
         bit_accs = torch.sum(diff1, dim=-1) / diff1.shape[-1]  # b k -> b
         word_accs = (bit_accs == 1)  # b
         log_stats = {
-            "loss": loss.item(),
-            "loss_w": lossw.item(),
-            "loss_i": lossi.item(),
-            "psnr": utils_img.psnr(imgs_w, imgs_compare).mean().item(),
-            "bit_acc_avg": torch.mean(bit_accs).item(),
-            "word_acc_avg": torch.mean(word_accs.type(torch.float)).item(),
-            "lr": optimizer.param_groups[0]["lr"],
-            "no_w_step": no_w_step,
-            "step": step,
-            "ascent_step": ascent_step,
-            "proj_max_step": proj_max_step,
+            "train/loss": loss.item(),
+            "train/loss_w": lossw.item(),
+            "train/loss_i": lossi.item(),
+            "train/psnr": utils_img.psnr(imgs_w, imgs_compare).mean().item(),
+            "train/bit_acc_avg": torch.mean(bit_accs).item(),
+            "train/word_acc_avg": torch.mean(word_accs.type(torch.float)).item(),
+            "train/lr": optimizer.param_groups[0]["lr"],
+            "train/no_w_step": no_w_step,
+            "train/step": step,
+            "train/ascent_step": ascent_step,
+            "train/proj_max_step": proj_max_step,
         }
 
         for log_key, log_val in log_stats.items():
-            metric_logger.update(**{log_key: log_val})
+            metric_logger.update(**{log_key.replace('train/', ''): log_val})
 
         if ACC: accelerator.log(log_stats, step=step * accelerator.num_processes)
         else: wandb.log(log_stats, step=step)
@@ -623,7 +623,7 @@ def val(
         imgs_w = decoder_tune(z, maps=flat_maps)
 
         log_stats = {
-            "psnr_val": utils_img.psnr(imgs_w, imgs_res).mean().item(),
+            "validate/psnr_val": utils_img.psnr(imgs_w, imgs_res).mean().item(),
         }
         attacks = {
             'none': lambda x: x,
@@ -646,10 +646,10 @@ def val(
             diff = (~torch.logical_xor(decoded > 0, msg_val > 0))  # b k -> b k
             bit_accs = torch.sum(diff, dim=-1) / diff.shape[-1]  # b k -> b
             word_accs = (bit_accs == 1)  # b
-            log_stats[f'bit_acc_{name}'] = torch.mean(bit_accs).item()
-            log_stats[f'word_acc_{name}'] = torch.mean(word_accs.type(torch.float)).item()
+            log_stats[f'validate/bit_acc_{name}'] = torch.mean(bit_accs).item()
+            log_stats[f'validate/word_acc_{name}'] = torch.mean(word_accs.type(torch.float)).item()
         for name, loss in log_stats.items():
-            metric_logger.update(**{name: loss})
+            metric_logger.update(**{name.replace('validate/', ''): loss})
 
         # mkdir
         os.makedirs(os.path.join(ODIR, 'validate', f'{train_step}'), exist_ok=True)
