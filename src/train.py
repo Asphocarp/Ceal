@@ -179,7 +179,6 @@ def main(args):
         os.makedirs(os.path.join(CLEAN_MODEL_DIR, subdir), exist_ok=True)
 
 
-
     # %%==================== Main ====================
     # >> init logging
     if ACC:
@@ -249,22 +248,7 @@ def main(args):
         mn = mn.to(device)
 
     # >> get ex
-    if EX_TYPE == 'random':
-        print(f'>>> Using random extractor...')
-        msg_decoder = utils.get_hidden_decoder(
-            num_bits=BIT_LENGTH,
-            redundancy=HIDDEN_REDUNDANCY,
-            num_blocks=3,
-            channels=128)
-        def shuffle_params(m):
-            if type(m)==nn.Conv2d or type(m)==nn.BatchNorm2d:
-                param = m.weight
-                m.weight.data = nn.Parameter(torch.tensor(np.random.normal(0, 1, param.shape)).float())
-                param = m.bias
-                m.bias.data = nn.Parameter(torch.zeros(len(param.view(-1))).float().reshape(param.shape))
-        shuffle_params(msg_decoder)
-        msg_decoder = msg_decoder.to(device)
-    elif EX_TYPE in ['hidden', 'jit', 'sstamp']:
+    if EX_TYPE in ['hidden', 'jit', 'sstamp']:
         if '.torchscript.' in EX_CKPT:
             msg_decoder = torch.jit.load(EX_CKPT).to(device)
         else:
@@ -277,7 +261,6 @@ def main(args):
             ckpt = utils.get_hidden_decoder_ckpt(EX_CKPT)
             print(msg_decoder.load_state_dict(ckpt, strict=False))
             msg_decoder.eval()
-
             # whitening
             print(f'>>> Whitening...')
             with torch.no_grad():
@@ -298,7 +281,6 @@ def main(args):
                     ys.append(y.to('cpu'))
                 ys = torch.cat(ys, dim=0)
                 nbit = ys.shape[1]
-
                 # whitening
                 mean = ys.mean(dim=0, keepdim=True)  # NxD -> 1xD
                 ys_centered = ys - mean  # NxD
@@ -315,6 +297,29 @@ def main(args):
                 EX_CKPT = EX_CKPT.replace(".pth", "_whit.torchscript.pth")
                 print(f'>>> Creating torchscript at {EX_CKPT}...')
                 torch.jit.save(torchscript_m, EX_CKPT)
+    elif EX_TYPE == 'random':
+        print(f'>>> Using random extractor...')
+        msg_decoder = utils.get_hidden_decoder(
+            num_bits=BIT_LENGTH,
+            redundancy=HIDDEN_REDUNDANCY,
+            num_blocks=3,
+            channels=128)
+        def shuffle_params(m):
+            if type(m)==nn.Conv2d or type(m)==nn.BatchNorm2d:
+                param = m.weight
+                m.weight.data = nn.Parameter(torch.tensor(np.random.normal(0, 1, param.shape)).float())
+                param = m.bias
+                m.bias.data = nn.Parameter(torch.zeros(len(param.view(-1))).float().reshape(param.shape))
+        shuffle_params(msg_decoder)
+        msg_decoder = msg_decoder.to(device)
+    elif EX_TYPE == 'resnet':
+        from torchvision.models import resnet50, ResNet50_Weights
+        msg_decoder = resnet50(weights=ResNet50_Weights.IMAGENET1K_V2)
+        msg_decoder.fc = torch.nn.Linear(2048,32)
+        msg_decoder = msg_decoder.to(device)
+        msg_decoder.load_state_dict(torch.load(EX_CKPT, map_location='cpu'))
+    else:
+        raise NotImplementedError
 
     # >> prepare to train
     vae_ori.eval()
