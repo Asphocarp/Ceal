@@ -14,7 +14,7 @@ CUDA_VISIBLE_DEVICES=1 python src/train.py \\
     --output_dir "output_turbo" \\
     --ex_type "hidden" \\
     --ex_ckpt "pretrained/dec_48b_whit.torchscript.pt" \\
-    --acc true \\
+    --acc false \\
     --seed 0 \\
     --train_dir "../cache/train2014/" \\
     --val_dir "../cache/val2014/" \\
