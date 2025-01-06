@@ -15,9 +15,11 @@ os.makedirs("output_turbo", exist_ok=True)
 
 '''
 EGs: 
+python scripts/train_mn.py -c 1 --debug true
 python scripts/train_mn.py -c 3 --model_id "../cache/sdxl-turbo"
-python scripts/train_mn.py -c 1 --model_id "../cache/sdxl-turbo" \
-    --bit_length 32 --ex_type "resnet" --ex_ckpt "pretrained/resnet.pth"
+python scripts/train_mn.py -c 1 \
+    --bit_length 32 --ex_type "resnet" --ex_ckpt "pretrained/resnet.pth" --consi 2.5
+stabilityai/sdxl-turbo
 '''
 print(f'> Override args: {override}')
 
@@ -26,7 +28,7 @@ command = f"""
 CUDA_VISIBLE_DEVICES={CUDA} python src/train.py \\
     --batch_size 4 \\
     --consi 1.8 \\
-    --model_id "stabilityai/sdxl-turbo" \\
+    --model_id "../cache/sdxl-turbo" \\
     --output_dir "output_turbo" \\
     --warmup_steps 0 \\
     --ex_type "hidden" \\

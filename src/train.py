@@ -80,6 +80,7 @@ parser.add_argument("--proj_max_step", type=int, default=10,
                     help='max step for projection')
 parser.add_argument("--stop_when_ascent", type=utils.str2bool, default=True,
                     help='stop projectionwhen lossi stop decreasing')
+parser.add_argument("--debug", type=utils.str2bool, default=False)
 # pathfinder config
 parser.add_argument("--granularity", type=str, default='kernel',
                     help='granularity for pathfinder')
@@ -150,6 +151,7 @@ def main(args):
     LAMBDAI = args.lambdai
     VALIDATE = args.validate
     SAVE_ALL_CKPTS = args.save_all_ckpts
+    DEBUG = args.debug
     # GreedyPGD (1. loose proj till in eps_i 2. GD with w&i)
     STOP_WHEN_ASCENT = args.stop_when_ascent
     PROJ_MAX_STEP = args.proj_max_step
@@ -392,9 +394,11 @@ def main(args):
     # >> losses
     # lossw
     if LOSSW == 'bce':
-        def loss_w(decoded, keys, temp=1.0 if 'sstamp' in EX_CKPT else 10.0):
-            return F.binary_cross_entropy_with_logits(
-                decoded * temp, keys, reduction='mean')
+        def loss_w(
+            decoded, keys, temp=1.0 if 'sstamp' in EX_CKPT 
+                else 0.1 if EX_TYPE == 'resnet'
+                else 10.0  # TODO config for this
+        ): return F.binary_cross_entropy_with_logits(decoded * temp, keys, reduction='mean')
     else: raise NotImplementedError
     # lossi
     if LOSSI == 'mse':
@@ -467,6 +471,10 @@ def main(args):
         to_project = CONSI > 0 and lossi > CONSI
         if not to_project:
             decoded = msg_decoder(before_msg_decoder(imgs_w))  # b c h w -> b k
+            # for debug
+            if DEBUG:
+                print(f'> decoded: {decoded.mean().item()} {decoded.std().item()}, msg: {msg.mean().item()} {msg.std().item()}')
+                print(f'> decoded: {decoded}')
             lossw = loss_w(decoded, msg)
             loss = lossw + LAMBDAI * lossi
             loss.backward()
