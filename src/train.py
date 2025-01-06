@@ -40,8 +40,8 @@ parser.add_argument("--local_files_only", type=utils.str2bool, default=True)
 parser.add_argument("--use_safetensors", type=utils.str2bool, default=True)
 parser.add_argument("--torch_dtype_str", type=str, default='float32')
 parser.add_argument("--bit_length", type=int, default=48)
-parser.add_argument("--hidden_dims", type=str, default='[]', 
-                    help='hidden dims for mapping network, like [128, 256, 512]')
+parser.add_argument("--hidden_dims", type=str, default='[1024]', 
+                    help='hidden dims for mapping network, like [1024,1024]')
 parser.add_argument("--vae_dec_ckpt", type=str, default='',
                     help='path to vae.decoder checkpoint')
 parser.add_argument("--ex_type", type=str, default='hidden',
@@ -75,6 +75,11 @@ parser.add_argument("--lambdai", type=float, default=0.2,
 parser.add_argument("--save_img_freq", type=int, default=50)
 parser.add_argument("--save_ckpt_freq", type=int, default=2000)
 parser.add_argument("--validate", type=utils.str2bool, default=True)
+parser.add_argument("--save_all_ckpts", type=utils.str2bool, default=False)
+parser.add_argument("--proj_max_step", type=int, default=10,
+                    help='max step for projection')
+parser.add_argument("--stop_when_ascent", type=utils.str2bool, default=True,
+                    help='stop projectionwhen lossi stop decreasing')
 # pathfinder config
 parser.add_argument("--granularity", type=str, default='kernel',
                     help='granularity for pathfinder')
@@ -144,28 +149,14 @@ def main(args):
     CONSI = args.consi
     LAMBDAI = args.lambdai
     VALIDATE = args.validate
+    SAVE_ALL_CKPTS = args.save_all_ckpts
+    # GreedyPGD (1. loose proj till in eps_i 2. GD with w&i)
+    STOP_WHEN_ASCENT = args.stop_when_ascent
+    PROJ_MAX_STEP = args.proj_max_step
     # hidden
     HIDDEN_REDUNDANCY = args.hidden_redundancy
     HIDDEN_DEPTH = args.hidden_depth
     HIDDEN_CHANNELS = args.hidden_channels
-    # pathfinder
-    GRANULARITY = args.granularity
-    LAYER_SELECTION = args.layer_selection
-    LAYER_BEGIN = args.layer_begin
-    LAYER_END = args.layer_end
-    USE_LORA = args.use_lora
-    LORA_RANK = args.lora_rank
-    CHANNEL_SELECTION = args.channel_selection
-    INCLUDE_BIAS = args.include_bias
-    ENABLE_GROUP = args.enable_group
-    CONTINUOUS_GROUPS = args.continuous_groups
-    CHAIN = args.chain
-    TOTAL_GROUP_NUM = args.total_group_num
-    GROUP_NUM = args.group_num
-    START_GROUP = args.start_group
-    CONV_OUT_FULL_OUT = args.conv_out_full_out
-    CONV_IN_NULL_IN = args.conv_in_null_in
-    ABSOLUTE_PERTURB = args.absolute_perturb
 
     # >> handler
     CONF_DICT = vars(args)
@@ -175,7 +166,7 @@ def main(args):
     TORCH_DTYPE = getattr(torch, TORCH_DTYPE_STR)
     utils.seed_everything(SEED)
     # pure str conf dict
-    HIDDEN_DIMS = eval(HIDDEN_DIMS_STR)  # !unsafe
+    HIDDEN_DIMS = eval(HIDDEN_DIMS_STR)  # TODO safe_eval / str2list
     # ODIR: output of this run
     ODIR = os.path.join(OUTPUT_DIR, CODENAME)
     CLEAN_MODEL_DIR = os.path.join(OUTPUT_DIR, '_clean_', MODEL_ID.replace('/', '_'))
@@ -187,15 +178,6 @@ def main(args):
     for subdir in clean_model_subdirs:
         os.makedirs(os.path.join(CLEAN_MODEL_DIR, subdir), exist_ok=True)
 
-    # >> FIXME
-    # GreedyPGD: 1. loose proj till in eps_i 2. GD with w&i  -  the default
-    # details
-    STOP_WHEN_ASCENT = True  # stop when lossi stop decreasing
-    GOIN_MAX = 10  # give up going in when c>max, meaning bad lossi eval for this batch
-    # other
-    SAVE_ALL_CKPTS = True
-    SIMPLE_MN = True
-    RANDOM_EXTRACTOR = False
 
 
     # %%==================== Main ====================
@@ -485,10 +467,10 @@ def main(args):
             loss.backward()
             optimizer.step()
         else:  # proj
-            goin_counter = 0  # for GOIN_MAX
+            proj_step_counter = 0  # for PROJ_MAX_STEP
             last_lossi = lossi  # for STOP_WHEN_ASCENT
             # break when 1. done descent 2. ascent 3. max iter
-            while lossi > CONSI and (not STOP_WHEN_ASCENT or last_lossi>=lossi) and goin_counter < GOIN_MAX:
+            while lossi > CONSI and (not STOP_WHEN_ASCENT or last_lossi>=lossi) and proj_step_counter < PROJ_MAX_STEP:
                 last_lossi = lossi
                 # > op.apply lossi
                 (LAMBDAI*lossi).backward(retain_graph=False)
@@ -499,7 +481,7 @@ def main(args):
                 imgs_w = decoder_tune(z, maps=flat_maps)
                 lossi = loss_i(imgs_w, imgs_compare)
                 print(f'> going in => lossi: {lossi}')
-                goin_counter += 1
+                proj_step_counter += 1
                 no_w_step += 1  # acctually accumulated w step (on same batch)
             # for case 2&3
             if lossi > CONSI:
@@ -513,9 +495,9 @@ def main(args):
                         lossw = loss_w(decoded, msg)
                         loss = lossw + LAMBDAI * lossi
                 # case 3: max iter
-                elif goin_counter >= GOIN_MAX:
+                elif proj_step_counter >= PROJ_MAX_STEP:
                     proj_max_step += 1
-                    print(f'> given up for MAX ITER {goin_counter}, lossi: {lossi}')
+                    print(f'> given up for MAX ITER {proj_step_counter}, lossi: {lossi}')
                     with torch.no_grad():  # just for logging w
                         decoded = msg_decoder(before_msg_decoder(imgs_w))  # b c h w -> b k
                         lossw = loss_w(decoded, msg)
@@ -523,7 +505,7 @@ def main(args):
                 optimizer.zero_grad()  # for sure
             # for case 1: done proj
             else: 
-                print(f'> loose in after {goin_counter}, lossi: {lossi}')
+                print(f'> loose in after {proj_step_counter}, lossi: {lossi}')
                 # go one w step after going in (since we got i, getting w is cheap)
                 decoded = msg_decoder(before_msg_decoder(imgs_w))  # b c h w -> b k
                 lossw = loss_w(decoded, msg)

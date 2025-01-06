@@ -1,20 +1,32 @@
-import subprocess
 import os
+import sys
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../src')))
+import subprocess
 import misc
+import argparse
 
-# Ensure the output directory exists
+parser = argparse.ArgumentParser()
+parser.add_argument("-c", "--cuda", type=str, default="2")
+args, override = parser.parse_known_args()
+
+CUDA = args.cuda
 os.makedirs("output_turbo", exist_ok=True)
 
-command = """
-CUDA_VISIBLE_DEVICES=1 python src/train.py \\
-    --codename "08R_Lm-ob_R8_Hnone_I0d2_Mturbo_B48_G32" \\
+
+print(f'> Override args: {override}')
+
+    # --codename "08R_Lm-ob_R8_Hnone_I0d2_Mturbo_B48_G32" \\
+command = f"""
+CUDA_VISIBLE_DEVICES={CUDA} python src/train.py \\
     --batch_size 4 \\
-    --warmup_steps 0 \\
     --consi 1.8 \\
+    --model_id "stabilityai/sdxl-turbo" \\
     --output_dir "output_turbo" \\
+    --warmup_steps 0 \\
     --ex_type "hidden" \\
     --ex_ckpt "pretrained/dec_48b_whit.torchscript.pt" \\
     --acc false \\
+    --save_all_ckpts false \\
     --seed 0 \\
     --train_dir "../cache/train2014/" \\
     --val_dir "../cache/val2014/" \\
@@ -32,7 +44,6 @@ CUDA_VISIBLE_DEVICES=1 python src/train.py \\
     --log_freq 10 \\
     --save_img_freq 50 \\
     --save_ckpt_freq 2000 \\
-    --model_id "stabilityai/sdxl-turbo" \\
     --local_files_only true \\
     --use_safetensors true \\
     --use_cached_latents false \\
@@ -53,14 +64,15 @@ CUDA_VISIBLE_DEVICES=1 python src/train.py \\
     --conv_out_full_out false \\
     --conv_in_null_in true \\
     --absolute_perturb false \\
-    --hidden_dims "[]" \\
+    --hidden_dims "[1024]" \\
     --hidden_channels 64 \\
     --hidden_depth 8 \\
     --hidden_redundancy 1 \\
     --validate true \\
     --val_img_size 512 \\
     --val_img_num 80 \\
-    --val_batch_size 4
+    --val_batch_size 4 \\
+    {' '.join(override)}
 """
 
 # Add logging to file
