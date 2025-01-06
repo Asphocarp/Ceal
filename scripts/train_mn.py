@@ -13,6 +13,7 @@ CUDA = args.cuda
 os.makedirs("output_turbo", exist_ok=True)
 
 
+# EG: python scripts/train_mn.py -c 3 --model_id "../cache/sdxl-turbo"
 print(f'> Override args: {override}')
 
     # --codename "08R_Lm-ob_R8_Hnone_I0d2_Mturbo_B48_G32" \\
