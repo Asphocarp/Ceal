@@ -518,27 +518,26 @@ def get_convs(model: nn.Module) -> List[Tuple[str, nn.Conv2d]]:
     not_mid_part = [i for i in ret if 'mid_block' not in i[0]]
     return [not_mid_part[0]] + mid_part + not_mid_part[1:] if not_mid_part else mid_part
 
-def get_pipe(conf):
-    # conf: Config
+def get_pipe(model_id, local_files_only, use_safetensors, torch_dtype: torch.dtype):
     from diffusers import DiffusionPipeline, UNet2DConditionModel, LCMScheduler, \
         DPMSolverMultistepScheduler, StableDiffusionPipeline, DiTPipeline
     kwargs_from_pretrained = {
-        "local_files_only": conf.local_files_only,
-        "use_safetensors": conf.use_safetensors,
-        "torch_dtype": conf.get_torch_dtype(),
-        "variant": "fp16" if conf.torch_dtype_str == "float16" else None,
+        "local_files_only": local_files_only,
+        "use_safetensors": use_safetensors,
+        "torch_dtype": torch_dtype,
+        "variant": "fp16" if torch_dtype == torch.float16 else None,
         "add_watermarker": False,
     }
-    if 'sdxl-turbo' in conf.model_id:
+    if 'sdxl-turbo' in model_id:
         pipe = DiffusionPipeline.from_pretrained(
-            conf.model_id,
+            model_id,
             **kwargs_from_pretrained,
         )
-    elif 'lcm-sdxl' in conf.model_id:
+    elif 'lcm-sdxl' in model_id:
         unet = UNet2DConditionModel.from_pretrained(
             # "latent-consistency/lcm-sdxl",
             # "../../cache/lcm-sdxl",
-            conf.model_id,
+            model_id,
             **kwargs_from_pretrained,
         )
         pipe = DiffusionPipeline.from_pretrained(
@@ -548,23 +547,23 @@ def get_pipe(conf):
             **kwargs_from_pretrained,
         )
         pipe.scheduler = LCMScheduler.from_config(pipe.scheduler.config)
-    elif 'stable-diffusion-xl-base-1.0' in conf.model_id:
+    elif 'stable-diffusion-xl-base-1.0' in model_id:
         pipe = DiffusionPipeline.from_pretrained(
             # "stabilityai/stable-diffusion-xl-base-1.0", 
             # "../../cache/stable-diffusion-xl-base-1.0",
-            conf.model_id,
+            model_id,
             **kwargs_from_pretrained,
         )
         pipe.unet = torch.compile(pipe.unet, mode="reduce-overhead", fullgraph=True)
-    elif 'stable-diffusion-2-1' in conf.model_id:
+    elif 'stable-diffusion-2-1' in model_id:
         pipe = StableDiffusionPipeline.from_pretrained(
-            conf.model_id, 
+            model_id, 
             **kwargs_from_pretrained,
         )
         pipe.scheduler = DPMSolverMultistepScheduler.from_config(pipe.scheduler.config)
-    elif 'DiT-XL-2-512' in conf.model_id:
+    elif 'DiT-XL-2-512' in model_id:
         pipe = DiTPipeline.from_pretrained(
-            conf.model_id, 
+            model_id, 
             **kwargs_from_pretrained,
         )
         pipe.scheduler = DPMSolverMultistepScheduler.from_config(pipe.scheduler.config)
@@ -572,10 +571,8 @@ def get_pipe(conf):
         raise NotImplemented
     return pipe
 
-def get_pipe_step_args(conf):
-    # conf: Config
-    # from config import Config
-    if 'sdxl-turbo' in conf.model_id:
+def get_pipe_step_args(model_id):
+    if 'sdxl-turbo' in model_id:
         # num_inference_steps=4, guidance_scale=0.0
         # height=512, width=512,
         args = {
@@ -584,7 +581,7 @@ def get_pipe_step_args(conf):
             "height": 512,
             "width": 512,
         }
-    elif 'lcm-sdxl' in conf.model_id:
+    elif 'lcm-sdxl' in model_id:
         # num_inference_steps=4, guidance_scale=1.0
         args = {
             "num_inference_steps": 4,
@@ -592,17 +589,17 @@ def get_pipe_step_args(conf):
             "height": 768,
             "width": 768,
         }
-    elif 'stable-diffusion-xl-base-1.0' in conf.model_id:
+    elif 'stable-diffusion-xl-base-1.0' in model_id:
         args = {
             "height": 768,
             "width": 768,
         }
-    elif 'stable-diffusion-2-1' in conf.model_id:
+    elif 'stable-diffusion-2-1' in model_id:
         args = {
             "height": 512,
             "width": 512,
         }
-    elif 'DiT-XL-2-512' in conf.model_id:
+    elif 'DiT-XL-2-512' in model_id:
         args = {
             "num_inference_steps": 25,
         }

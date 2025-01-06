@@ -1,15 +1,12 @@
+#!/usr/bin/env python
 # %%
 import os
 import sys
 import warnings
-
-# autopep8: off
-
-sys.path.append('src')
+sys.path.insert(0, os.path.dirname(__file__))
 warnings.filterwarnings("ignore")
 
 from typing import *
-from config import conf
 import utils_img
 import utils
 from torchvision.utils import save_image
@@ -19,8 +16,6 @@ import torch
 from copy import deepcopy
 from loss.loss_provider import LossProvider
 import lpips
-from diffusers import DiffusionPipeline, UNet2DConditionModel, LCMScheduler, DPMSolverMultistepScheduler, \
-    StableDiffusionPipeline
 from diffusers.models.vae import Decoder
 from diffusers.models.autoencoder_kl import AutoencoderKL
 from pathfinder import Pathfinder, Policy
@@ -30,119 +25,220 @@ from torch import nn
 import numpy as np
 from tqdm import tqdm
 from mapper import MappingNetwork
-import signal
 from PIL import Image
-from torch.optim import AdamW
-import shutil
 import gc
+import misc
 
-# autopep8: on
 
-
+# %%==================== Config ====================
 parser = argparse.ArgumentParser()
-parser.add_argument("--config", type=str, default="./configs/current.yaml")
-args = parser.parse_args()
-# config
-conf.from_yaml(args.config)
-conf.makedirs()
-utils.seed_everything(conf.seed)
+parser.add_argument("--codename", type=str, default=None, help="None for auto-generated")
+parser.add_argument("--acc", type=utils.str2bool, default=False, help="use accelerator")
+parser.add_argument("--seed", type=int, default=42)
+parser.add_argument("--model_id", type=str, default='stabilityai/sdxl-turbo')
+parser.add_argument("--local_files_only", type=utils.str2bool, default=True)
+parser.add_argument("--use_safetensors", type=utils.str2bool, default=True)
+parser.add_argument("--torch_dtype_str", type=str, default='float32')
+parser.add_argument("--bit_length", type=int, default=48)
+parser.add_argument("--hidden_dims", type=str, default='[]', 
+                    help='hidden dims for mapping network, like [128, 256, 512]')
+parser.add_argument("--vae_dec_ckpt", type=str, default='',
+                    help='path to vae.decoder checkpoint')
+parser.add_argument("--ex_type", type=str, default='hidden',
+                    help='random, hidden, sstamp, jit ... TODO')
+parser.add_argument("--ex_ckpt", type=str, default='pretrained/dec_48b_whit.torchscript.pt',
+                    help='path to extractor checkpoint')
+parser.add_argument("--train_dir", type=str, default='../cache/train2014',
+                    help='path to train dataset')
+parser.add_argument("--val_dir", type=str, default='../cache/val2014',
+                    help='path to val dataset')
+parser.add_argument("--output_dir", type=str, default='output_turbo')
+parser.add_argument("--batch_size", type=int, default=4)
+parser.add_argument("--val_batch_size", type=int, default=4)
+parser.add_argument("--steps", type=int, default=100000)
+parser.add_argument("--img_size", type=int, default=256)
+parser.add_argument("--val_img_size", type=int, default=256)
+parser.add_argument("--val_img_num", type=int, default=1000)
+parser.add_argument("--train_ex", type=utils.str2bool, default=False)
+parser.add_argument("--distortion", type=utils.str2bool, default=False)
+parser.add_argument("--use_cached_latents", type=utils.str2bool, default=False)
+parser.add_argument("--lossw", type=str, default='bce')
+parser.add_argument("--lossi", type=str, default='watson-vgg')
+parser.add_argument("--optimizer", type=str, default='AdamW,lr=1e-4')
+parser.add_argument("--log_freq", type=int, default=10)
+parser.add_argument("--warmup_steps", type=int, default=0)
+parser.add_argument("--cosine_lr", type=utils.str2bool, default=False)
+parser.add_argument("--consi", type=float, default=2, 
+                    help="constraint for lossi, set to -1 to disable")
+parser.add_argument("--lambdai", type=float, default=0.2, 
+                    help='lambda for lossi')
+parser.add_argument("--save_img_freq", type=int, default=50)
+parser.add_argument("--save_ckpt_freq", type=int, default=2000)
+parser.add_argument("--validate", type=utils.str2bool, default=True)
+# pathfinder config
+parser.add_argument("--granularity", type=str, default='kernel',
+                    help='granularity for pathfinder')
+parser.add_argument("--layer_selection", type=str, default='layer_range',
+                    help='layer selection for pathfinder')
+parser.add_argument("--layer_begin", type=str, default='up_blocks.1.resnets.0.conv1',
+                    help='layer begin for pathfinder')
+parser.add_argument("--layer_end", type=str, default='up_blocks.3.resnets.0.conv1',
+                    help='layer end for pathfinder')
+parser.add_argument("--use_lora", type=utils.str2bool, default=True)
+parser.add_argument("--lora_rank", type=int, default=8)
+parser.add_argument("--channel_selection", type=str, default='random',
+                    help='channel selection for pathfinder')
+parser.add_argument("--include_bias", type=utils.str2bool, default=False)
+parser.add_argument("--enable_group", type=utils.str2bool, default=True)
+parser.add_argument("--continuous_groups", type=utils.str2bool, default=True)
+parser.add_argument("--chain", type=utils.str2bool, default=True)
+parser.add_argument("--total_group_num", type=int, default=32)
+parser.add_argument("--group_num", type=int, default=32)
+parser.add_argument("--start_group", type=int, default=11)
+parser.add_argument("--conv_out_full_out", type=utils.str2bool, default=False)
+parser.add_argument("--conv_in_null_in", type=utils.str2bool, default=True)
+parser.add_argument("--absolute_perturb", type=utils.str2bool, default=False)
+# if ex_type is hidden
+parser.add_argument("--hidden_redundancy", type=int, default=0,
+                    help='redundancy for hidden extractor')
+parser.add_argument("--hidden_depth", type=int, default=3,
+                    help='depth for hidden extractor')
+parser.add_argument("--hidden_channels", type=int, default=128,
+                    help='channels for hidden extractor')
+args, unknown = parser.parse_known_args()
 
-# versions:
-# - GreedyPGD: 1. loose proj till in eps_i 2. GD with w&i  -  the default
-# - +BinS: loose proj->exact proj (via BinSearch)
-# - - +BOUNDARY_LEAP: loose proj->exact proj (via BinSearch), GD->BOUNDARY_LEAP w ⊥ i
-# - +PLater: activate GreedyP after loss_w<0.1 for 20 steps
-# - +PCGrad: GD->PCGrad
-# ---
-# - StochasticGreedy: proj once and go to next batch => more data, but maybe a little more stable against batch noise
-# - GreedyGDP: 1. GD with w 2. loose proj till in eps_i => waste the last i grad
-# - JustGD: normal gradient descent
-# - JustPCGRAD: just normal GD with PCGrad
+# >> rename
+def main(args):
+    CODENAME = args.codename
+    ACC = args.acc
+    SEED = args.seed
+    MODEL_ID = args.model_id
+    LOCAL_FILES_ONLY = args.local_files_only
+    USE_SAFE_TENSORS = args.use_safetensors
+    TORCH_DTYPE_STR = args.torch_dtype_str
+    BIT_LENGTH = args.bit_length
+    HIDDEN_DIMS_STR = args.hidden_dims
+    VAE_DEC_CKPT = args.vae_dec_ckpt
+    EX_TYPE = args.ex_type
+    EX_CKPT = args.ex_ckpt
+    TRAIN_DIR = args.train_dir
+    VAL_DIR = args.val_dir
+    OUTPUT_DIR = args.output_dir
+    BATCH_SIZE = args.batch_size
+    VAL_BATCH_SIZE = args.val_batch_size
+    STEPS = args.steps
+    IMG_SIZE = args.img_size
+    VAL_IMG_SIZE = args.val_img_size
+    VAL_IMG_NUM = args.val_img_num
+    TRAIN_EX = args.train_ex
+    DISTORTION = args.distortion
+    USE_CACHED_LATENTS = args.use_cached_latents
+    LOSSW = args.lossw
+    LOSSI = args.lossi
+    OPTIMIZER = args.optimizer
+    LOG_FREQ = args.log_freq
+    SAVE_IMG_FREQ = args.save_img_freq
+    SAVE_CKPT_FREQ = args.save_ckpt_freq
+    WARMUP_STEPS = args.warmup_steps
+    COSINE_LR = args.cosine_lr
+    CONSI = args.consi
+    LAMBDAI = args.lambdai
+    VALIDATE = args.validate
+    # hidden
+    HIDDEN_REDUNDANCY = args.hidden_redundancy
+    HIDDEN_DEPTH = args.hidden_depth
+    HIDDEN_CHANNELS = args.hidden_channels
+    # pathfinder
+    GRANULARITY = args.granularity
+    LAYER_SELECTION = args.layer_selection
+    LAYER_BEGIN = args.layer_begin
+    LAYER_END = args.layer_end
+    USE_LORA = args.use_lora
+    LORA_RANK = args.lora_rank
+    CHANNEL_SELECTION = args.channel_selection
+    INCLUDE_BIAS = args.include_bias
+    ENABLE_GROUP = args.enable_group
+    CONTINUOUS_GROUPS = args.continuous_groups
+    CHAIN = args.chain
+    TOTAL_GROUP_NUM = args.total_group_num
+    GROUP_NUM = args.group_num
+    START_GROUP = args.start_group
+    CONV_OUT_FULL_OUT = args.conv_out_full_out
+    CONV_IN_NULL_IN = args.conv_in_null_in
+    ABSOLUTE_PERTURB = args.absolute_perturb
 
-GreedyPGD = True
-if GreedyPGD:
-    BinS = False
-    if BinS:
-        BOUNDARY_LEAP = False
-    # (config) None | [threshold, steps], like [0.1, 20], activate after lossw<0.1 (98%) for continuous 20 steps
-    PLater = None  
-    if PLater:
-        # [activated, good step counter]
-        PLater_state = [False, 0]  
+    # >> handler
+    CONF_DICT = vars(args)
+    print('> CONF_DICT:\n', CONF_DICT)
+    if CODENAME is None:
+        CODENAME = misc.time_str('%m%d_%H%M%S')
+    TORCH_DTYPE = getattr(torch, TORCH_DTYPE_STR)
+    utils.seed_everything(SEED)
+    # pure str conf dict
+    HIDDEN_DIMS = eval(HIDDEN_DIMS_STR)  # !unsafe
+    # ODIR: output of this run
+    ODIR = os.path.join(OUTPUT_DIR, CODENAME)
+    CLEAN_MODEL_DIR = os.path.join(OUTPUT_DIR, '_clean_', MODEL_ID.replace('/', '_'))
+    # makedirs
+    output_subdirs = ['train', 'validate', 'test_caption', 'test_caption_result', 'test_x_svg']
+    clean_model_subdirs = ['test_caption', 'caption_latent']
+    for subdir in output_subdirs:
+        os.makedirs(os.path.join(ODIR, subdir), exist_ok=True)
+    for subdir in clean_model_subdirs:
+        os.makedirs(os.path.join(CLEAN_MODEL_DIR, subdir), exist_ok=True)
+
+    # >> FIXME
+    # GreedyPGD: 1. loose proj till in eps_i 2. GD with w&i  -  the default
     # details
     STOP_WHEN_ASCENT = True  # stop when lossi stop decreasing
-    UNDO_ASCENT = False  # undo last step when lossi stop decreasing
     GOIN_MAX = 10  # give up going in when c>max, meaning bad lossi eval for this batch
-    OPTIM_CLEAR_STATE = False  # clear state when changing direction # TODO try two optim?
-StochasticGreedy = False
-GreedyGDP = False
-JustGD = False
-JustPCGRAD = False
-# assert choosing only one
-assert sum([GreedyPGD, StochasticGreedy, GreedyGDP, JustGD, JustPCGRAD]) == 1
-
-# other
-SAVE_ALL_CKPTS = True
-SIMPLE_MN = True
-RANDOM_EXTRACTOR = False
+    # other
+    SAVE_ALL_CKPTS = True
+    SIMPLE_MN = True
+    RANDOM_EXTRACTOR = False
 
 
-def main(sweep=True):
-    ascent_step = 0
-    proj_max_step = 0
-
-    torch.cuda.empty_cache()
-    if conf.accelerate:
+    # %%==================== Main ====================
+    # >> init logging
+    if ACC:
         from accelerate import Accelerator
         accelerator = Accelerator(log_with='wandb')
         device = accelerator.device
         accelerator.init_trackers(
-            project_name="hyper-signature",
-            config=conf.get_dict(),
-            init_kwargs={"wandb": {"name": conf.code_name}},
-        )
+            project_name="Ceal",
+            config=CONF_DICT,
+            init_kwargs={"wandb": {"name": CODENAME}})
     else:
-        device = conf.device
-        wandb.init(
-            project="hyper-signature",
-            config=conf.get_dict(),
-            name=conf.code_name,
-        )
-    if sweep:
-        conf.sync_update(wandb.config)
+        device = 'cuda' if torch.cuda.is_available() else 'cpu'
+        wandb.init(project="Ceal", config=CONF_DICT, name=CODENAME)
 
-    # get the name of current run (None if wandb is disabled I guess)
-    if not conf.accelerate or accelerator.is_main_process:
-        run_name: Optional[str] = wandb.run.name
-
-    # %%
-    # get ori vae
-    pipe = utils.get_pipe(conf)
+    # >> get ori vae
+    pipe = utils.get_pipe(
+        model_id=MODEL_ID,
+        local_files_only=LOCAL_FILES_ONLY,
+        use_safetensors=USE_SAFE_TENSORS,
+        torch_dtype=TORCH_DTYPE,
+    )
     vae_ori: AutoencoderKL = pipe.vae
-    vae_ori = vae_ori.to(device)
+    vae_ori: AutoencoderKL = vae_ori.to(device)
     decoder_ori: Decoder = vae_ori.decoder
 
-    # %%
-    # copy, get path, init mappers
+    # >> copy, get path, init mappers
     decoder_tune: Decoder = deepcopy(decoder_ori)
     decoder_tune = decoder_tune.to(device)
     # with pathfinder
-    po = Policy(**conf.get_dict())
+    po = Policy(**CONF_DICT)  # TODO verify dict
     pf = Pathfinder(po)
     pf.explore(decoder_tune)
     pf.print_path()
     total_size = pf.init_model(decoder_tune)
     print(f'> total_size: {total_size}')
-    if conf.accelerate:
-        accelerator.log({'total_size': total_size}, step=0)
-    else:
-        wandb.log({'total_size': total_size}, step=0)
+    if ACC: accelerator.log({'total_size': total_size}, step=0)
+    else: wandb.log({'total_size': total_size}, step=0)
     mn = MappingNetwork(
-        bit_length=conf.bit_length,
-        total_size=total_size,
-        hidden_dims=conf.hidden_dims,
-        use_batchnorm=conf.use_batchnorm,
-        constrainable=SIMPLE_MN,  # TODO config
+        bit_length=BIT_LENGTH,
+        output_size=total_size,
+        hidden_dims=HIDDEN_DIMS,
         device=device,
     )
     # # pipeline parallel (NOT USING NOW)
@@ -154,11 +250,9 @@ def main(sweep=True):
     #         split_size=conf.parallel_split_size,
     #     )
 
-    # %%
-    # load decoder checkpoint (actually mn ckpt now)
-    if conf.use_ldm_decoder_checkpoint != '':
-        checkpoint = torch.load(conf.use_ldm_decoder_checkpoint,
-                                map_location='cpu')
+    # >> load vae.decoder ckpt (actually mn ckpt now)
+    if VAE_DEC_CKPT != '':
+        checkpoint = torch.load(VAE_DEC_CKPT, map_location='cpu')
         # fix state dict of mn
         # replace all key like 'module.seq.0.weight' to 'seq.0.weight'
         fixed_state_dict = {}
@@ -172,26 +266,12 @@ def main(sweep=True):
         mn.load_state_dict(checkpoint['mapping_network'])
         mn = mn.to(device)
 
-    # %%
-    # msg_decoder
-
-    # if True:  # resnet
-    #     # maybe bad for small batch when eval?
-    #     msg_decoder = WatermarkDecoder(conf.bit_length, 'resnet50')
-    #     # use pretrained decoder
-    #     if conf.use_msg_decoder_checkpoint is not None:
-    #         checkpoint = torch.load(conf.use_msg_decoder_checkpoint,
-    #                                 map_location='cpu')
-    #         msg_decoder.load_state_dict(checkpoint['msg_decoder'],
-    #                                     # strict=False,
-    #                                     )
-    #     msg_decoder = msg_decoder.to(device, conf.get_torch_dtype())
-
-    if RANDOM_EXTRACTOR:
+    # >> get ex
+    if EX_TYPE == 'random':
         print(f'>>> Using random extractor...')
         msg_decoder = utils.get_hidden_decoder(
-            num_bits=conf.bit_length,
-            redundancy=conf.msg_decoder_hidden_redundancy,
+            num_bits=BIT_LENGTH,
+            redundancy=HIDDEN_REDUNDANCY,
             num_blocks=3,
             channels=128)
         def shuffle_params(m):
@@ -202,20 +282,17 @@ def main(sweep=True):
                 m.bias.data = nn.Parameter(torch.zeros(len(param.view(-1))).float().reshape(param.shape))
         shuffle_params(msg_decoder)
         msg_decoder = msg_decoder.to(device)
-    else:  # hidden
-        # jit
-        if '.torchscript.' in conf.use_msg_decoder_checkpoint:
-            msg_decoder = (torch.jit.load(conf.use_msg_decoder_checkpoint)
-                           .to(device))
+    elif EX_TYPE in ['hidden', 'jit', 'sstamp']:
+        if '.torchscript.' in EX_CKPT:
+            msg_decoder = torch.jit.load(EX_CKPT).to(device)
         else:
-            msg_decoder = (utils.get_hidden_decoder(
-                num_bits=conf.bit_length,
-                redundancy=conf.msg_decoder_hidden_redundancy,
-                num_blocks=conf.msg_decoder_hidden_depth,
-                channels=conf.msg_decoder_hidden_channels)
-                           .to(device))
+            msg_decoder = utils.get_hidden_decoder(
+                num_bits=BIT_LENGTH,
+                redundancy=HIDDEN_REDUNDANCY,
+                num_blocks=HIDDEN_DEPTH,
+                channels=HIDDEN_CHANNELS).to(device)
             # use pretrained decoder
-            ckpt = utils.get_hidden_decoder_ckpt(conf.use_msg_decoder_checkpoint)
+            ckpt = utils.get_hidden_decoder_ckpt(EX_CKPT)
             print(msg_decoder.load_state_dict(ckpt, strict=False))
             msg_decoder.eval()
 
@@ -231,7 +308,7 @@ def main(sweep=True):
                         0.229, 0.224, 0.225]),
                 ])
                 loader = utils.get_dataloader(
-                    conf.train_dir, transform, batch_size=16, collate_fn=None)
+                    TRAIN_DIR, transform, batch_size=16, collate_fn=None)
                 ys = []
                 for i, x in tqdm(enumerate(loader), total=len(loader)):
                     x = x.to(device)
@@ -253,28 +330,23 @@ def main(sweep=True):
                 linear.bias.data = np.sqrt(nbit) * bias
                 msg_decoder = nn.Sequential(msg_decoder, linear.to(device))
                 torchscript_m = torch.jit.script(msg_decoder)
-                conf.sync_set(
-                    "use_msg_decoder_checkpoint",
-                    conf.use_msg_decoder_checkpoint.replace(".pth", "_whit.torchscript.pth")
-                )
-                print(f'>>> Creating torchscript at {conf.use_msg_decoder_checkpoint}...')
-                torch.jit.save(torchscript_m, conf.use_msg_decoder_checkpoint)
+                EX_CKPT = EX_CKPT.replace(".pth", "_whit.torchscript.pth")
+                print(f'>>> Creating torchscript at {EX_CKPT}...')
+                torch.jit.save(torchscript_m, EX_CKPT)
 
-    # %%
-    # prepare to train
+    # >> prepare to train
     vae_ori.eval()
     for param in [*vae_ori.parameters()]:
         param.requires_grad = False
     decoder_tune.eval().requires_grad_(False)
     for param in [*msg_decoder.parameters()]:
-        param.requires_grad = conf.train_msg_decoder
-
-    # NOW make real msg_decoder func for sstamp
-    if 'sstamp' in conf.use_msg_decoder_checkpoint:
+        param.requires_grad = TRAIN_EX
+    # for sstamp: make real msg_decoder func for 
+    if 'sstamp' in EX_CKPT:
         msg_decoder_model = msg_decoder
         def aux(input: torch.Tensor):
             # input: now in imgnet space (normalized), like -2.2~2.2
-            dummy_secret = torch.zeros((input.shape[0], conf.bit_length), device=device)
+            dummy_secret = torch.zeros((input.shape[0], BIT_LENGTH), device=device)
             # make sure input is in [0, 1]
             input_ = utils_img.unnormalize_img(input)
             # from BCHW to BHWC
@@ -282,218 +354,146 @@ def main(sweep=True):
             sstamp, res, message = msg_decoder_model(dummy_secret, input_)
             return message
         msg_decoder = aux
-
     # mappers
     all_mapper_params = []
     all_mapper_params += list(mn.parameters())
     mn.train().requires_grad_(True)
-
+    # loader and transforms
     vqgan_transform = transforms.Compose([
-        transforms.Resize(conf.img_size),
-        transforms.CenterCrop(conf.img_size),
+        transforms.Resize(IMG_SIZE),
+        transforms.CenterCrop(IMG_SIZE),
         transforms.ToTensor(),
         utils_img.normalize_vqgan,
     ])
     val_vqgan_transform = transforms.Compose([
-        transforms.Resize(conf.val_img_size),
-        transforms.CenterCrop(conf.val_img_size),
+        transforms.Resize(VAL_IMG_SIZE),
+        transforms.CenterCrop(VAL_IMG_SIZE),
         transforms.ToTensor(),
         utils_img.normalize_vqgan,
     ])
-
-    utils.seed_everything(conf.seed)  # for loader
-    if not conf.use_cached_latents:
+    if not USE_CACHED_LATENTS:
         train_loader = utils.get_dataloader_then_repeat(
-            conf.train_dir, vqgan_transform, conf.batch_size,
-            num_imgs=conf.batch_size * conf.steps,
+            TRAIN_DIR, vqgan_transform, BATCH_SIZE,
+            num_imgs=BATCH_SIZE * STEPS,
             shuffle=True, num_workers=4, collate_fn=None)
         val_loader = utils.get_dataloader(
-            conf.val_dir, val_vqgan_transform, conf.val_batch_size,
-            num_imgs=conf.val_img_num,
+            VAL_DIR, val_vqgan_transform, VAL_BATCH_SIZE,
+            num_imgs=VAL_BATCH_SIZE * VAL_IMG_NUM,
             shuffle=False, num_workers=4, collate_fn=None)
     else:
         train_loader = utils.latents_dataloader_repeat(
-            utils.latents_filename(conf.model_id, conf.img_size),
-            conf.batch_size,
-            num_imgs=conf.batch_size * conf.steps,
+            utils.latents_filename(MODEL_ID, IMG_SIZE),
+            BATCH_SIZE,
+            num_imgs=BATCH_SIZE * STEPS,
             num_workers=4, collate_fn=None)
         val_loader = utils.latents_dataloader_repeat(
-            utils.latents_filename(conf.model_id, conf.val_img_size)+'_val',
-            conf.val_batch_size,
-            num_imgs=conf.val_img_num,
+            utils.latents_filename(MODEL_ID, VAL_IMG_SIZE)+'_val',
+            VAL_BATCH_SIZE,
+            num_imgs=VAL_IMG_NUM,
             num_workers=4, collate_fn=None)
         vae_ori.encoder = None
         gc.collect()
-        
     vqgan_to_imnet = transforms.Compose(
         [utils_img.unnormalize_vqgan, utils_img.normalize_img])
-
-    if conf.distortion:
+    if DISTORTION:  # for additional robustness when training msg_decoder
         before_msg_decoder = transforms.Compose([
             vqgan_to_imnet,
-            # the following preprocessing is for robustness when training msg_decoder
             transforms.RandomErasing(),
-            transforms.RandomAffine(degrees=(-5, 5), translate=(0.01, 0.01), scale=(0.95, 1.0))
-        ])
-    else:
-        before_msg_decoder = transforms.Compose([
-            vqgan_to_imnet,
-        ])
+            transforms.RandomAffine(degrees=(-5, 5), translate=(0.01, 0.01), scale=(0.95, 1.0))])
+    else: before_msg_decoder = transforms.Compose([vqgan_to_imnet])
     
-    is_sstamp = 'sstamp' in conf.use_msg_decoder_checkpoint
-
-    # Create losses
-    if conf.loss_w == 'bce':
-        def loss_w(
-            decoded, keys, 
-            temp=1.0 if is_sstamp else 10.0
-        ):
+    # >> losses
+    # lossw
+    if LOSSW == 'bce':
+        def loss_w(decoded, keys, temp=1.0 if 'sstamp' in EX_CKPT else 10.0):
             return F.binary_cross_entropy_with_logits(
                 decoded * temp, keys, reduction='mean')
-    else:
-        raise NotImplementedError
-    if conf.loss_i == 'mse':
-        def loss_i(imgs_w, imgs):
-            return torch.mean((imgs_w - imgs) ** 2)
-    elif conf.loss_i == 'watson-dft':
+    else: raise NotImplementedError
+    # lossi
+    if LOSSI == 'mse':
+        def loss_i(imgs_w, imgs): return torch.mean((imgs_w - imgs) ** 2)
+    elif LOSSI == 'watson-dft':
         provider = LossProvider()
         loss_percep = provider.get_loss_function(
             'Watson-DFT', colorspace='RGB', pretrained=True, reduction='sum')
         loss_percep = loss_percep.to(device)
-
         def loss_i(imgs_w, imgs):
-            return loss_percep(
-                (1 + imgs_w) / 2.0, (1 + imgs) / 2.0) / imgs_w.shape[0]
-    elif conf.loss_i == 'watson-vgg':
+            return loss_percep((1 + imgs_w) / 2.0, (1 + imgs) / 2.0) / imgs_w.shape[0]
+    elif LOSSI == 'watson-vgg':
         provider = LossProvider()
         loss_percep = provider.get_loss_function(
             'Watson-VGG', colorspace='RGB', pretrained=True, reduction='sum')
         loss_percep = loss_percep.to(device)
-
         def loss_i(imgs_w, imgs):
-            return loss_percep(
-                (1 + imgs_w) / 2.0, (1 + imgs) / 2.0) / imgs_w.shape[0]
-    elif conf.loss_i == 'ssim':
+            return loss_percep((1 + imgs_w) / 2.0, (1 + imgs) / 2.0) / imgs_w.shape[0]
+    elif LOSSI == 'ssim':
         provider = LossProvider()
         loss_percep = provider.get_loss_function(
             'SSIM', colorspace='RGB', pretrained=True, reduction='sum')
         loss_percep = loss_percep.to(device)
-
         def loss_i(imgs_w, imgs):
-            return loss_percep(
-                (1 + imgs_w) / 2.0, (1 + imgs) / 2.0) / imgs_w.shape[0]
-    elif conf.loss_i == 'lpips':
+            return loss_percep((1 + imgs_w) / 2.0, (1 + imgs) / 2.0) / imgs_w.shape[0]
+    elif LOSSI == 'lpips':
         lpips_alex = lpips.LPIPS(net="alex", verbose=False).to(device)
         def loss_i(imgs_w, imgs):  # want [-1,1]
             return torch.mean(lpips_alex(imgs_w, imgs))
-    else:
-        raise NotImplementedError
+    else: raise NotImplementedError
 
-    if conf.accelerate:
-        decoder_tune, mn = accelerator.prepare(
-            decoder_tune, mn
-        )
-        vae_ori, msg_decoder = accelerator.prepare(
-            vae_ori, msg_decoder
-        )
+    # >> acc for models
+    if ACC: decoder_tune, mn, vae_ori, msg_decoder = accelerator.prepare(decoder_tune, mn, vae_ori, msg_decoder)
 
-    # optimizer
-    if conf.train_msg_decoder:
-        to_train = all_mapper_params + list(msg_decoder.parameters())
-    else:
-        to_train = all_mapper_params
-    optim_params = utils.parse_params(conf.optimizer)
-    optimizer = utils.build_optimizer(
-        model_params=to_train,
-        **optim_params
-    )
-    def rebuild():
-        op = utils.build_optimizer(
-            model_params=to_train,
-            **optim_params
-        )
-        return op
+    # >> optimizer
+    to_optim = all_mapper_params
+    if TRAIN_EX:
+        to_optim += list(msg_decoder.parameters())
+    optim_params = utils.parse_params(OPTIMIZER)
+    optimizer = utils.build_optimizer(model_params=to_optim, **optim_params)
+    if ACC: train_loader, optimizer = accelerator.prepare(train_loader, optimizer)
 
-    pack_optim = optimizer
-    if JustPCGRAD:
-        assert not conf.accelerate
-        from pcgrad import PCGrad
-        pack_optim = PCGrad(optimizer)
-    if GreedyPGD and (BinS or UNDO_ASCENT or OPTIM_CLEAR_STATE):
-        assert not conf.accelerate
-        from pcgrad import LeapGrad
-        pack_optim = LeapGrad(
-            optimizer,
-            reduction='mean',
-            rebuild=rebuild,
-        )
-
-    torch.cuda.empty_cache()
-
-    if conf.accelerate:
-        train_loader, optimizer = accelerator.prepare(
-            train_loader, optimizer
-        )
-
-    # Train
+    # >> train
     header = 'train'
     metric_logger = utils.MetricLogger(delimiter="  ")
     base_lr = optimizer.param_groups[0]["lr"]
-    if conf.accelerate:
-        base_lr *= accelerator.num_processes
-    no_w_step = 0
-
-    for step, imgs_in in enumerate(metric_logger.log_every(train_loader, conf.log_freq, header)):
-        if conf.use_cached_latents:
-            imgs_in = imgs_in[0]  # no label
+    if ACC: base_lr *= accelerator.num_processes
+    no_w_step, ascent_step, proj_max_step = 0, 0, 0
+    # loop
+    for step, imgs_in in enumerate(metric_logger.log_every(train_loader, LOG_FREQ, header)):
+        if USE_CACHED_LATENTS: imgs_in = imgs_in[0]  # no label
         imgs_in = imgs_in.to(device, non_blocking=True)
-        imgs_in = imgs_in.type(conf.get_torch_dtype())
+        imgs_in = imgs_in.type(TORCH_DTYPE)
         utils.adjust_learning_rate(
-            optimizer, step, conf.steps, conf.warmup_steps, base_lr, cosine_lr=conf.cosine_lr)
-        pack_optim.zero_grad()
-        # torch.cuda.empty_cache()  # waste time?
+            optimizer, step, STEPS, WARMUP_STEPS, base_lr, cosine_lr=COSINE_LR)
+        optimizer.zero_grad()
 
         # gen msg
-        msg = torch.randint(0, 2, size=(conf.batch_size, conf.bit_length),
-                            dtype=conf.get_torch_dtype(),
-                            ).to(device, non_blocking=True)
-        msg_str = ["".join([str(int(ii)) for ii in msg.tolist()[jj]]) for jj in range(conf.batch_size)]
+        msg = torch.randint(0, 2, size=(BATCH_SIZE, BIT_LENGTH), dtype=TORCH_DTYPE).to(device, non_blocking=True)
+        msg_str = ["".join([str(int(ii)) for ii in msg.tolist()[jj]]) for jj in range(BATCH_SIZE)]
 
         # gen image
-        if not conf.use_cached_latents:
-            z = vae_ori.pass_post_quant_conv(imgs_in)
-        else:
-            z = imgs_in
+        z = vae_ori.pass_post_quant_conv(imgs_in) if not USE_CACHED_LATENTS else imgs_in
         imgs_res = vae_ori.decoder(z)  # TODO load cached res as well
         flat_maps = mn(msg)
         imgs_w = decoder_tune(z, maps=flat_maps)
         imgs_compare = imgs_res
         lossi = loss_i(imgs_w, imgs_compare)
 
-        to_project = conf.i_constraint > 0 and lossi > conf.i_constraint
-
-        # if StochasticGreedy:
-        #     # TODO get lossw  # get lossw just for record
-        #     if to_project:
-        #         lossw = lossw.detach()
-        #         no_w_step += 1
-        #     # TODO backward, step
-        
-        assert GreedyPGD
-        if to_project:
+        to_project = CONSI > 0 and lossi > CONSI
+        if not to_project:
+            decoded = msg_decoder(before_msg_decoder(imgs_w))  # b c h w -> b k
+            lossw = loss_w(decoded, msg)
+            loss = lossw + LAMBDAI * lossi
+            loss.backward()
+            optimizer.step()
+        else:  # proj
             goin_counter = 0  # for GOIN_MAX
             last_lossi = lossi  # for STOP_WHEN_ASCENT
-            if OPTIM_CLEAR_STATE:
-                optimizer = pack_optim.clear_state()
-            while lossi > conf.i_constraint and (not STOP_WHEN_ASCENT or last_lossi>=lossi) and goin_counter < GOIN_MAX:
-                # break when 1. done descent 2. ascent (maybe tolerance?) 3. max iter
+            # break when 1. done descent 2. ascent 3. max iter
+            while lossi > CONSI and (not STOP_WHEN_ASCENT or last_lossi>=lossi) and goin_counter < GOIN_MAX:
                 last_lossi = lossi
-                if UNDO_ASCENT:
-                    pack_optim.store_p()
                 # > op.apply lossi
-                (conf.lambda_i*lossi).backward(retain_graph=False)
-                pack_optim.step()
-                pack_optim.zero_grad()
+                (LAMBDAI*lossi).backward(retain_graph=False)
+                optimizer.step()
+                optimizer.zero_grad()
                 # > get lossi
                 flat_maps = mn(msg)
                 imgs_w = decoder_tune(z, maps=flat_maps)
@@ -502,23 +502,16 @@ def main(sweep=True):
                 goin_counter += 1
                 no_w_step += 1  # acctually accumulated w step (on same batch)
             # for case 2&3
-            if lossi > conf.i_constraint:
+            if lossi > CONSI:
                 # case 2: ascent
                 if last_lossi < lossi:
                     ascent_step += 1
-                    if UNDO_ASCENT:
-                        pack_optim.restore_p()
-                        print(f'> given up for increasing, undo lossi: {last_lossi} <- {lossi}')
-                        lossi = last_lossi
-                        flat_maps = mn(msg)
-                        imgs_w = decoder_tune(z, maps=flat_maps)
-                    else:
-                        print(f'> given up for increasing lossi: {last_lossi} -> {lossi}')
+                    print(f'> given up for increasing lossi: {last_lossi} -> {lossi}')
                     del last_lossi
                     with torch.no_grad():  # just for logging w
                         decoded = msg_decoder(before_msg_decoder(imgs_w))  # b c h w -> b k
                         lossw = loss_w(decoded, msg)
-                        loss = conf.lambda_w * lossw + conf.lambda_i * lossi
+                        loss = lossw + LAMBDAI * lossi
                 # case 3: max iter
                 elif goin_counter >= GOIN_MAX:
                     proj_max_step += 1
@@ -526,76 +519,18 @@ def main(sweep=True):
                     with torch.no_grad():  # just for logging w
                         decoded = msg_decoder(before_msg_decoder(imgs_w))  # b c h w -> b k
                         lossw = loss_w(decoded, msg)
-                        loss = conf.lambda_w * lossw + conf.lambda_i * lossi
-                if BinS:  # > release accu ag etc here (pretty old code)
-                    pack_optim.release_delta()
-                    pack_optim.reset_leap()
-                pack_optim.zero_grad()  # for sure
+                        loss = lossw + LAMBDAI * lossi
+                optimizer.zero_grad()  # for sure
             # for case 1: done proj
             else: 
-                if not BinS:
-                    print(f'> loose in after {goin_counter}, lossi: {lossi}')
-                    # go one w step after going in (since we got i, getting w is cheap)
-                    decoded = msg_decoder(before_msg_decoder(imgs_w))  # b c h w -> b k
-                    lossw = loss_w(decoded, msg)
-                    loss = conf.lambda_w * lossw + conf.lambda_i * lossi
-                    loss.backward()
-                    pack_optim.step()
-                    pack_optim.zero_grad()  # for sure
-                else:  # > FOLD BinS
-                    with torch.no_grad():
-                        # back to boundary
-                        pack_optim.set_delta()
-                        al, ar, am = 0., 1., 1.
-                        print(f'> al: {al:.3f}, ar: {ar:.3f}, am: {am:.3f} => lossi: {lossi}')
-                        ieps = 0.01
-                        # while abs(lossi-conf.i_constraint) > ieps:  # both side
-                        while not (conf.i_constraint-ieps <= lossi <= conf.i_constraint):  # inside
-                            am = (al+ar)/2
-                            pack_optim.reapply(am)
-                            # get lossi
-                            flat_maps = mn(msg)
-                            imgs_w = decoder_tune(z, maps=flat_maps)
-                            lossi = loss_i(imgs_w, imgs_compare)
-                            print(f'> al: {al:.3f}, ar: {ar:.3f}, am: {am:.3f} => lossi: {lossi}')
-                            if lossi < conf.i_constraint:
-                                ar = am
-                            else:
-                                al = am
-                        pack_optim.release_delta()
-                    pack_optim.zero_grad()  # for sure
-                    # get lossi, lossw (at boundary)
-                    flat_maps = mn(msg)
-                    imgs_w = decoder_tune(z, maps=flat_maps)
-                    lossi = loss_i(imgs_w, imgs_compare)
-                    decoded = msg_decoder(before_msg_decoder(imgs_w))  # b c h w -> b k
-                    lossw = loss_w(decoded, msg)
-                    if BOUNDARY_LEAP:
-                        # op.accu lossw
-                        lossw.backward(retain_graph=True)
-                        pack_optim.accumulate()
-                        # op.grad_as_nv(loss_i)
-                        # # just a direction, no need to mul lambda_i here
-                        lossi.backward(retain_graph=False)
-                        pack_optim.grad_as_nv()
-                        # tangent leap
-                        if OPTIM_CLEAR_STATE:
-                            optimizer = pack_optim.clear_state()
-                        print(f'> leap {pack_optim.counter} by {pack_optim._reduction}')
-                        pack_optim.boundary_leap()
-                        if OPTIM_CLEAR_STATE:
-                            optimizer = pack_optim.clear_state()
-                    else:
-                        loss = conf.lambda_w * lossw + conf.lambda_i * lossi
-                        loss.backward()
-                        pack_optim.step()
-                    pack_optim.zero_grad()  # for sure
-        else:  # normally, no proj
-            decoded = msg_decoder(before_msg_decoder(imgs_w))  # b c h w -> b k
-            lossw = loss_w(decoded, msg)
-            loss = conf.lambda_w * lossw + conf.lambda_i * lossi
-            loss.backward()
-            pack_optim.step()
+                print(f'> loose in after {goin_counter}, lossi: {lossi}')
+                # go one w step after going in (since we got i, getting w is cheap)
+                decoded = msg_decoder(before_msg_decoder(imgs_w))  # b c h w -> b k
+                lossw = loss_w(decoded, msg)
+                loss = lossw + LAMBDAI * lossi
+                loss.backward()
+                optimizer.step()
+                optimizer.zero_grad()  # for sure
 
         # log stats
         diff1 = (~torch.logical_xor(decoded > 0, msg > 0))  # b k -> b k
@@ -618,123 +553,90 @@ def main(sweep=True):
         for log_key, log_val in log_stats.items():
             metric_logger.update(**{log_key: log_val})
 
-        if conf.accelerate:
-            accelerator.log(log_stats, step=step * accelerator.num_processes)
-        else:
-            wandb.log(log_stats, step=step)
+        if ACC: accelerator.log(log_stats, step=step * accelerator.num_processes)
+        else: wandb.log(log_stats, step=step)
 
         # save images during training
-        if (step + 1) % conf.save_img_freq == 0:
-            if not conf.accelerate or accelerator.is_main_process:
-                if not conf.use_cached_latents:
-                    save_image(
-                        torch.clamp(utils_img.unnormalize_vqgan(imgs_in), 0, 1),
-                        os.path.join(
-                            conf.get_output_dir(),
-                            'train',
-                            f'{step:05}_{header}_orig.png'),
-                        nrow=8)
-                save_image(
-                    torch.clamp(utils_img.unnormalize_vqgan(imgs_res), 0, 1),
-                    os.path.join(
-                        conf.get_output_dir(),
-                        'train',
-                        f'{step:05}_{header}_res.png'),
-                    nrow=8)
-                save_image(
-                    torch.clamp(utils_img.unnormalize_vqgan(imgs_w), 0, 1),
-                    os.path.join(
-                        conf.get_output_dir(),
-                        'train',
-                        f'{step:05}_{header}_w.png'),
-                    nrow=8)
+        if (step + 1) % SAVE_IMG_FREQ == 0:
+            if not ACC or accelerator.is_main_process:
+                if not USE_CACHED_LATENTS:
+                    save_image(torch.clamp(utils_img.unnormalize_vqgan(imgs_in), 0, 1),
+                        os.path.join(ODIR, 'train', f'{step:05}_{header}_orig.png'), nrow=8)
+                save_image(torch.clamp(utils_img.unnormalize_vqgan(imgs_res), 0, 1),
+                    os.path.join(ODIR, 'train', f'{step:05}_{header}_res.png'), nrow=8)
+                save_image(torch.clamp(utils_img.unnormalize_vqgan(imgs_w), 0, 1),
+                    os.path.join(ODIR, 'train', f'{step:05}_{header}_w.png'), nrow=8)
 
-        # TODO remove all intermediate objects?
+        # remove all intermediate objects
         del imgs_in, z, imgs_res, flat_maps, imgs_w, imgs_compare, lossi, decoded, lossw, loss, diff1, bit_accs, word_accs
 
         # validate and save checkpoint
-        if (step + 1) % conf.save_checkpoint_freq == 0:  # or step == 0
+        if (step + 1) % SAVE_CKPT_FREQ == 0:  # or step == 0
             # validate
-            if conf.validate:
+            if VALIDATE:
                 decoder_tune.eval()
                 val_stats = val(
-                    device, vae_ori, decoder_tune, msg_decoder, val_loader,
-                    vqgan_to_imnet, mn, step)
-                if conf.accelerate:
-                    accelerator.log(val_stats, step=step * accelerator.num_processes)
-                else:
-                    wandb.log(val_stats, step=step)
+                    device, vae_ori, decoder_tune, msg_decoder, val_loader, vqgan_to_imnet, mn, step,
+                    IMG_SIZE, VAL_BATCH_SIZE, BIT_LENGTH, LOG_FREQ, USE_CACHED_LATENTS, TORCH_DTYPE,
+                    EX_CKPT, SAVE_IMG_FREQ, ODIR)
+                if ACC: accelerator.log(val_stats, step=step * accelerator.num_processes)
+                else: wandb.log(val_stats, step=step)
                 decoder_tune.train()
             # save the latest checkpoint
-            if not conf.accelerate or accelerator.is_main_process:
-                if conf.accelerate:
+            if not ACC or accelerator.is_main_process:
+                if ACC:
                     dict1 = {
                         # 'decoder_tune': decoder_tune.state_dict(),
                         # 'msg_decoder': msg_decoder.state_dict(),
                         'mapping_network': accelerator.unwrap_model(mn).state_dict(),
                         'optimizer': optimizer.state_dict(),
-                        'params': dict(conf.get_dict()),
+                        'params': dict(CONF_DICT),
                     }
-                    if SAVE_ALL_CKPTS:
-                        accelerator.save(dict1, os.path.join(
-                            conf.get_output_dir(), f"checkpoint_{step + 1}.pth"))
-                    else:
-                        accelerator.save(dict1, os.path.join(
-                            conf.get_output_dir(), f"checkpoint.pth"))
+                    if SAVE_ALL_CKPTS: accelerator.save(dict1, os.path.join(ODIR, f"ckpt_{step+1}.pth"))
+                    else: accelerator.save(dict1, os.path.join(ODIR, f"ckpt.pth"))
                 else:
                     dict1 = {
                         # 'decoder_tune': decoder_tune.state_dict(),
                         # 'msg_decoder': msg_decoder.state_dict(),
                         'mapping_network': mn.state_dict(),
                         'optimizer': optimizer.state_dict(),
-                        'params': dict(conf.get_dict()),
+                        'params': dict(CONF_DICT),
                     }
-                    if SAVE_ALL_CKPTS:
-                        torch.save(dict1, os.path.join(
-                            conf.get_output_dir(), f"checkpoint_{step + 1}.pth"))
-                    else:
-                        torch.save(dict1, os.path.join(
-                            conf.get_output_dir(), f"checkpoint.pth"))
+                    if SAVE_ALL_CKPTS: torch.save(dict1, os.path.join(ODIR, f"ckpt_{step+1}.pth"))
+                    else: torch.save(dict1, os.path.join(ODIR, f"ckpt.pth"))
 
     print("Averaged {} stats:".format('train'), metric_logger)
-    train_stats = {k: meter.global_avg for k, meter in metric_logger.meters.items()}
+    # train_stats = {k: meter.global_avg for k, meter in metric_logger.meters.items()}
 
-    if conf.accelerate:
-        accelerator.end_training()
+    if ACC: accelerator.end_training()
     torch.cuda.empty_cache()
 
 
 @torch.no_grad()
-def val(device, vae_ori, decoder_tune, msg_decoder, val_loader, vqgan_to_imnet, mn, train_step):
+def val(
+    device, vae_ori, decoder_tune, msg_decoder, val_loader, vqgan_to_imnet, mn, train_step,
+    IMG_SIZE, VAL_BATCH_SIZE, BIT_LENGTH, LOG_FREQ, USE_CACHED_LATENTS, TORCH_DTYPE,
+    EX_CKPT, SAVE_IMG_FREQ, ODIR,
+):
     header = 'Eval'
     metric_logger = utils.MetricLogger(delimiter="  ")
     # for sstamp:
-    sstamp_resize = transforms.Compose([
-        transforms.Resize(conf.img_size),
-    ])
-    for ii, imgs_in in enumerate(metric_logger.log_every(val_loader, conf.log_freq, header)):
-        if conf.use_cached_latents:
-            imgs_in = imgs_in[0]  # no label
+    sstamp_resize = transforms.Compose([ transforms.Resize(IMG_SIZE) ])
+    for ii, imgs_in in enumerate(metric_logger.log_every(val_loader, LOG_FREQ, header)):
+        if USE_CACHED_LATENTS: imgs_in = imgs_in[0]  # no label
         imgs_in = imgs_in.to(device, non_blocking=True)
-        imgs_in = imgs_in.type(conf.get_torch_dtype())
+        imgs_in = imgs_in.type(TORCH_DTYPE)
         # gen msg
-        msg_val = torch.randint(0, 2, size=(conf.val_batch_size, conf.bit_length),
-                                dtype=conf.get_torch_dtype(),
-                                ).to(device, non_blocking=True)
-        # msg_val_str = ["".join([str(int(ii)) for ii in msg_val.tolist()[jj]]) for jj in range(conf.val_batch_size)]
+        msg_val = torch.randint(0, 2, size=(VAL_BATCH_SIZE, BIT_LENGTH), dtype=TORCH_DTYPE).to(device, non_blocking=True)
 
         # gen image
-        if not conf.use_cached_latents:
-            z = vae_ori.pass_post_quant_conv(imgs_in)
-        else:
-            z = imgs_in
+        z = vae_ori.pass_post_quant_conv(imgs_in) if not USE_CACHED_LATENTS else imgs_in
         imgs_res = vae_ori.decoder(z)
         flat_maps = mn(msg_val)
         imgs_w = decoder_tune(z, maps=flat_maps)
 
         log_stats = {
             "psnr_val": utils_img.psnr(imgs_w, imgs_res).mean().item(),
-            # "psnr_ori_val": utils_img.psnr(imgs_w, imgs).mean().item(),
         }
         attacks = {
             'none': lambda x: x,
@@ -752,86 +654,41 @@ def val(device, vae_ori, decoder_tune, msg_decoder, val_loader, vqgan_to_imnet, 
         for name, attack in attacks.items():
             imgs_aug = attack(vqgan_to_imnet(imgs_w))
             # for sstamp, ensure resize to 400, 400
-            if 'sstamp' in conf.use_msg_decoder_checkpoint:
-                imgs_aug = sstamp_resize(imgs_aug)
+            if 'sstamp' in EX_CKPT: imgs_aug = sstamp_resize(imgs_aug)
             decoded = msg_decoder(imgs_aug)  # b c h w -> b k
             diff = (~torch.logical_xor(decoded > 0, msg_val > 0))  # b k -> b k
             bit_accs = torch.sum(diff, dim=-1) / diff.shape[-1]  # b k -> b
             word_accs = (bit_accs == 1)  # b
             log_stats[f'bit_acc_{name}'] = torch.mean(bit_accs).item()
-            log_stats[f'word_acc_{name}'] = torch.mean(
-                word_accs.type(torch.float)).item()
+            log_stats[f'word_acc_{name}'] = torch.mean(word_accs.type(torch.float)).item()
         for name, loss in log_stats.items():
             metric_logger.update(**{name: loss})
 
         # mkdir
-        os.makedirs(
-            os.path.join(
-                conf.get_output_dir(),
-                'validate',
-                f'{train_step}'),
-            exist_ok=True
-        )
+        os.makedirs(os.path.join(ODIR, 'validate', f'{train_step}'), exist_ok=True)
 
-        if ii % conf.val_save_img_freq == 0:
-            orig_filename = os.path.join(
-                conf.get_output_dir(),
-                'validate',
-                f'{train_step}',
-                f'{ii:05}_val_orig.png')
-            res_filename = os.path.join(
-                conf.get_output_dir(),
-                'validate',
-                f'{train_step}',
-                f'{ii:05}_val_res.png')
-            w_filename = os.path.join(
-                conf.get_output_dir(),
-                'validate',
-                f'{train_step}',
-                f'{ii:05}_val_w.png')
-            diff_filename = os.path.join(
-                conf.get_output_dir(),
-                'validate',
-                f'{train_step}',
-                f'{ii:05}_val_zdiff.png')
-            if not conf.use_cached_latents:
-                save_image(
-                    torch.clamp(utils_img.unnormalize_vqgan(imgs_in), 0, 1),
-                    orig_filename,
-                    nrow=8)
-            save_image(
-                torch.clamp(utils_img.unnormalize_vqgan(imgs_res), 0, 1),
-                res_filename,
-                nrow=8)
-            save_image(
-                torch.clamp(utils_img.unnormalize_vqgan(imgs_w), 0, 1),
-                w_filename,
-                nrow=8)
+        if ii % SAVE_IMG_FREQ == 0:
+            orig_filename = os.path.join(ODIR, 'validate', f'{train_step}', f'{ii:05}_val_orig.png')
+            res_filename = os.path.join(ODIR, 'validate', f'{train_step}', f'{ii:05}_val_res.png') 
+            w_filename = os.path.join(ODIR, 'validate', f'{train_step}', f'{ii:05}_val_w.png')
+            diff_filename = os.path.join(ODIR, 'validate', f'{train_step}', f'{ii:05}_val_zdiff.png')
+            if not USE_CACHED_LATENTS:
+                save_image(torch.clamp(utils_img.unnormalize_vqgan(imgs_in), 0, 1), orig_filename, nrow=8)
+            save_image(torch.clamp(utils_img.unnormalize_vqgan(imgs_res), 0, 1), res_filename, nrow=8)
+            save_image(torch.clamp(utils_img.unnormalize_vqgan(imgs_w), 0, 1), w_filename, nrow=8)
             # save the diff*10 between res and w
-            # TODO optimize
-            try:
+            try:  # TODO optimize
                 img_1 = Image.open(res_filename)
                 img_2 = Image.open(w_filename)
-                diff = np.abs(np.asarray(img_1).astype(int) -
-                              np.asarray(img_2).astype(int)) * 10
+                diff = np.abs(np.asarray(img_1).astype(int) - np.asarray(img_2).astype(int)) * 10
                 diff = Image.fromarray(diff.astype(np.uint8))
                 diff.save(diff_filename)
-            except:
-                pass
+            except: pass
 
     print("Averaged {} stats:".format('eval'), metric_logger)
     val_stats = {k: meter.global_avg for k, meter in metric_logger.meters.items()}
     return val_stats
 
 
-# __main__
-sweep_id = os.getenv('SWEEP_ID')
-sweep_count = int(os.getenv('SWEEP_COUNT', 1))
-if sweep_id:
-    wandb.agent(sweep_id,
-                count=sweep_count,
-                function=main)
-else:
-    wandb.login()
-    main(sweep=False)
-
+if __name__ == '__main__':
+    main(args)

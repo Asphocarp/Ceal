@@ -1,6 +1,8 @@
 /.idea/
 /.vscode/
 __pycache__
+.DS_Store
+.env
 
 .webui_secret_key
 gradio_cached_examples
