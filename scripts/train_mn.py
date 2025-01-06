@@ -21,7 +21,7 @@ python scripts/train_mn.py -c 1 \
     --bit_length 32 --ex_type "resnet" --ex_ckpt "pretrained/resnet.pth" --consi 2.5
 stabilityai/sdxl-turbo
 '''
-print(f'> Override args: {override}')
+print(f'> override args: {override}')
 
     # --codename "08R_Lm-ob_R8_Hnone_I0d2_Mturbo_B48_G32" \\
 command = f"""
