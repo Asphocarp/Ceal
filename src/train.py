@@ -300,19 +300,12 @@ def main(args):
                 print(f'>>> Creating torchscript at {EX_CKPT}...')
                 torch.jit.save(torchscript_m, EX_CKPT)
     elif EX_TYPE == 'random':
-        print(f'>>> Using random extractor...')
-        msg_decoder = utils.get_hidden_decoder(
-            num_bits=BIT_LENGTH,
-            redundancy=HIDDEN_REDUNDANCY,
-            num_blocks=3,
-            channels=128)
-        def shuffle_params(m):
-            if type(m)==nn.Conv2d or type(m)==nn.BatchNorm2d:
-                param = m.weight
-                m.weight.data = nn.Parameter(torch.tensor(np.random.normal(0, 1, param.shape)).float())
-                param = m.bias
-                m.bias.data = nn.Parameter(torch.zeros(len(param.view(-1))).float().reshape(param.shape))
-        shuffle_params(msg_decoder)
+        # current: resnet50+normal_init_fc
+        from torchvision.models import resnet50, ResNet50_Weights
+        msg_decoder = resnet50(weights=ResNet50_Weights.IMAGENET1K_V2)
+        msg_decoder.fc = torch.nn.Linear(2048,BIT_LENGTH)
+        torch.nn.init.normal_(msg_decoder.fc.weight, mean=0, std=0.0275)
+        # (as for bias, it is defaultly uniform inited)
         msg_decoder = msg_decoder.to(device)
     elif EX_TYPE == 'resnet':
         from torchvision.models import resnet50, ResNet50_Weights

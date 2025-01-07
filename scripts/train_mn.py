@@ -15,11 +15,24 @@ os.makedirs("output_turbo", exist_ok=True)
 
 '''
 EGs: 
+# Debug
 python scripts/train_mn.py -c 1 --debug true
-python scripts/train_mn.py -c 3 --model_id "../cache/sdxl-turbo"
+# Normal
+python scripts/train_mn.py -c 3
+# ResRescaled 
 python scripts/train_mn.py -c 1 \
     --bit_length 32 --ex_type "resnet" --ex_ckpt "pretrained/resnet.pth" --consi 2.5
-stabilityai/sdxl-turbo
+# ResReLd025
+python scripts/train_mn.py -c 1 \
+    --bit_length 32 --ex_type "resnet" --ex_ckpt "pretrained/resnet.pth" --consi 2.5 \
+    --lambdai 0.025
+# ResReLd02More; but improve metrics later
+python scripts/train_mn.py -c 1 \
+    --bit_length 32 --ex_type "resnet" --ex_ckpt "pretrained/resnet.pth" --consi 2.5 \
+    --lambdai 0.02 --layer_end "up_blocks.3.resnets.0.conv1"
+# Random
+python scripts/train_mn.py -c 1 \
+    --bit_length 32 --ex_type "random" --consi 2.5
 '''
 print(f'> override args: {override}')
 
