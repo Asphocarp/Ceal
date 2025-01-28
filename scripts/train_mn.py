@@ -33,6 +33,30 @@ python scripts/train_mn.py -c 1 \
 # Random
 python scripts/train_mn.py -c 1 \
     --bit_length 32 --ex_type "random" --consi 2.5
+
+    # old
+    --output_dir "output_turbo" \\
+    --layer_end "up_blocks.3.resnets.0.conv1" \\
+    --conv_out_full_out false \\
+    --steps 100000 \\
+    --consi 1.8 \\
+# Normal2.5
+python scripts/train_mn.py -c 0
+# Normal1 - 3 (8*0.25 steps)
+python scripts/train_mn.py -c 1 \
+    --consi 1.0
+python scripts/train_mn.py -c 1 \
+    --consi 1.25
+python scripts/train_mn.py -c 1 \
+    --consi 1.5
+python scripts/train_mn.py -c 1 \
+    --consi 1.75
+# lcm C2.5
+python scripts/train_mn.py -c 3 \
+    --model_id "../cache/lcm-sdxl"
+# DiT C2.5
+python scripts/train_mn.py -c 3 \
+    --model_id "../cache/DiT-XL-2-512"
 '''
 print(f'> override args: {override}')
 
@@ -40,7 +64,7 @@ print(f'> override args: {override}')
 command = f"""
 CUDA_VISIBLE_DEVICES={CUDA} python src/train.py \\
     --batch_size 4 \\
-    --consi 1.8 \\
+    --consi 2.5 \\
     --model_id "../cache/sdxl-turbo" \\
     --output_dir "output_turbo" \\
     --warmup_steps 0 \\
@@ -53,7 +77,7 @@ CUDA_VISIBLE_DEVICES={CUDA} python src/train.py \\
     --val_dir "../cache/val2014/" \\
     --torch_dtype_str "float32" \\
     --img_size 256 \\
-    --steps 100000 \\
+    --steps 30000 \\
     --optimizer "AdamW,lr=1e-4" \\
     --cosine_lr false \\
     --bit_length 48 \\
@@ -71,7 +95,9 @@ CUDA_VISIBLE_DEVICES={CUDA} python src/train.py \\
     --granularity "kernel" \\
     --layer_selection "layer_range" \\
     --layer_begin "up_blocks.1.resnets.0.conv1" \\
-    --layer_end "up_blocks.3.resnets.0.conv1" \\
+    --layer_end "conv_out" \\
+    --conv_out_full_out true \\
+    --conv_in_null_in true \\
     --use_lora true \\
     --lora_rank 8 \\
     --channel_selection "random" \\
@@ -82,8 +108,6 @@ CUDA_VISIBLE_DEVICES={CUDA} python src/train.py \\
     --total_group_num 32 \\
     --group_num 32 \\
     --start_group 11 \\
-    --conv_out_full_out false \\
-    --conv_in_null_in true \\
     --absolute_perturb false \\
     --hidden_dims "[1024]" \\
     --hidden_channels 64 \\

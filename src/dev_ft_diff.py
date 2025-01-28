@@ -55,7 +55,6 @@ parser.add_argument("--val_dir", type=str, default='../cache/val2014',
 parser.add_argument("--output_dir", type=str, default='output_turbo')
 parser.add_argument("--batch_size", type=int, default=4)
 parser.add_argument("--val_batch_size", type=int, default=4)
-parser.add_argument("--algo", type=str, default='greedy_pgd', help='greedy_pgd / loose_pgd')
 parser.add_argument("--steps", type=int, default=100000)
 parser.add_argument("--img_size", type=int, default=256)
 parser.add_argument("--val_img_size", type=int, default=256)
@@ -153,8 +152,7 @@ def main(args):
     VALIDATE = args.validate
     SAVE_ALL_CKPTS = args.save_all_ckpts
     DEBUG = args.debug
-    ALGO = args.algo
-    # for GreedyPGD (1. loose proj till in eps_i 2. GD with w&i)
+    # GreedyPGD (1. loose proj till in eps_i 2. GD with w&i)
     STOP_WHEN_ASCENT = args.stop_when_ascent
     PROJ_MAX_STEP = args.proj_max_step
     # hidden
@@ -302,12 +300,19 @@ def main(args):
                 print(f'>>> Creating torchscript at {EX_CKPT}...')
                 torch.jit.save(torchscript_m, EX_CKPT)
     elif EX_TYPE == 'random':
-        # current: resnet50+normal_init_fc
-        from torchvision.models import resnet50, ResNet50_Weights
-        msg_decoder = resnet50(weights=ResNet50_Weights.IMAGENET1K_V2)
-        msg_decoder.fc = torch.nn.Linear(2048,BIT_LENGTH)
-        torch.nn.init.normal_(msg_decoder.fc.weight, mean=0, std=0.0275)
-        # (as for bias, it is defaultly uniform inited)
+        print(f'>>> Using random extractor...')
+        msg_decoder = utils.get_hidden_decoder(
+            num_bits=BIT_LENGTH,
+            redundancy=HIDDEN_REDUNDANCY,
+            num_blocks=3,
+            channels=128)
+        def shuffle_params(m):
+            if type(m)==nn.Conv2d or type(m)==nn.BatchNorm2d:
+                param = m.weight
+                m.weight.data = nn.Parameter(torch.tensor(np.random.normal(0, 1, param.shape)).float())
+                param = m.bias
+                m.bias.data = nn.Parameter(torch.zeros(len(param.view(-1))).float().reshape(param.shape))
+        shuffle_params(msg_decoder)
         msg_decoder = msg_decoder.to(device)
     elif EX_TYPE == 'resnet':
         from torchvision.models import resnet50, ResNet50_Weights
@@ -463,79 +468,64 @@ def main(args):
         imgs_compare = imgs_res
         lossi = loss_i(imgs_w, imgs_compare)
 
-        match ALGO:
-            case 'loose_pgd':
-                to_project = CONSI > 0 and lossi > CONSI
-                decoded = msg_decoder(before_msg_decoder(imgs_w))  # b c h w -> b k
-                lossw = loss_w(decoded, msg)
-                if to_project:
-                    lossw = lossw.detach()
-                loss = lossw + LAMBDAI * lossi
-                loss.backward()
+        to_project = CONSI > 0 and lossi > CONSI
+        if not to_project:
+            decoded = msg_decoder(before_msg_decoder(imgs_w))  # b c h w -> b k
+            # for debug
+            if DEBUG:
+                print(f'> decoded: {decoded.mean().item()} {decoded.std().item()}, msg: {msg.mean().item()} {msg.std().item()}')
+                print(f'> decoded: {decoded}')
+            lossw = loss_w(decoded, msg)
+            loss = lossw + LAMBDAI * lossi
+            loss.backward()
+            optimizer.step()
+        else:  # proj
+            proj_step_counter = 0  # for PROJ_MAX_STEP
+            last_lossi = lossi  # for STOP_WHEN_ASCENT
+            # break when 1. done descent 2. ascent 3. max iter
+            while lossi > CONSI and (not STOP_WHEN_ASCENT or last_lossi>=lossi) and proj_step_counter < PROJ_MAX_STEP:
+                last_lossi = lossi
+                # > op.apply lossi
+                (LAMBDAI*lossi).backward(retain_graph=False)
                 optimizer.step()
+                optimizer.zero_grad()
+                # > get lossi
+                flat_maps = mn(msg)
+                imgs_w = decoder_tune(z, maps=flat_maps)
+                lossi = loss_i(imgs_w, imgs_compare)
+                print(f'> going in => lossi: {lossi}')
                 proj_step_counter += 1
                 no_w_step += 1  # acctually accumulated w step (on same batch)
-            case 'greedy_pgd':
-                to_project = CONSI > 0 and lossi > CONSI
-                if not to_project:
-                    decoded = msg_decoder(before_msg_decoder(imgs_w))  # b c h w -> b k
-                    # for debug
-                    if DEBUG:
-                        print(f'> decoded: {decoded.mean().item()} {decoded.std().item()}, msg: {msg.mean().item()} {msg.std().item()}')
-                        print(f'> decoded: {decoded}')
-                    lossw = loss_w(decoded, msg)
-                    loss = lossw + LAMBDAI * lossi
-                    loss.backward()
-                    optimizer.step()
-                else:  # proj
-                    proj_step_counter = 0  # for PROJ_MAX_STEP
-                    last_lossi = lossi  # for STOP_WHEN_ASCENT
-                    # break when 1. done descent 2. ascent 3. max iter
-                    while lossi > CONSI and (not STOP_WHEN_ASCENT or last_lossi>=lossi) and proj_step_counter < PROJ_MAX_STEP:
-                        last_lossi = lossi
-                        # > op.apply lossi
-                        (LAMBDAI*lossi).backward(retain_graph=False)
-                        optimizer.step()
-                        optimizer.zero_grad()
-                        # > get lossi
-                        flat_maps = mn(msg)
-                        imgs_w = decoder_tune(z, maps=flat_maps)
-                        lossi = loss_i(imgs_w, imgs_compare)
-                        print(f'> going in => lossi: {lossi}')
-                        proj_step_counter += 1
-                        no_w_step += 1  # acctually accumulated w step (on same batch)
-                    # for case 2&3
-                    if lossi > CONSI:
-                        # case 2: ascent
-                        if last_lossi < lossi:
-                            ascent_step += 1
-                            print(f'> given up for increasing lossi: {last_lossi} -> {lossi}')
-                            del last_lossi
-                            with torch.no_grad():  # just for logging w
-                                decoded = msg_decoder(before_msg_decoder(imgs_w))  # b c h w -> b k
-                                lossw = loss_w(decoded, msg)
-                                loss = lossw + LAMBDAI * lossi
-                        # case 3: max iter
-                        elif proj_step_counter >= PROJ_MAX_STEP:
-                            proj_max_step += 1
-                            print(f'> given up for MAX ITER {proj_step_counter}, lossi: {lossi}')
-                            with torch.no_grad():  # just for logging w
-                                decoded = msg_decoder(before_msg_decoder(imgs_w))  # b c h w -> b k
-                                lossw = loss_w(decoded, msg)
-                                loss = lossw + LAMBDAI * lossi
-                        optimizer.zero_grad()  # for sure
-                    # for case 1: done proj
-                    else: 
-                        print(f'> loose in after {proj_step_counter}, lossi: {lossi}')
-                        # go one w step after going in (since we got i, getting w is cheap)
+            # for case 2&3
+            if lossi > CONSI:
+                # case 2: ascent
+                if last_lossi < lossi:
+                    ascent_step += 1
+                    print(f'> given up for increasing lossi: {last_lossi} -> {lossi}')
+                    del last_lossi
+                    with torch.no_grad():  # just for logging w
                         decoded = msg_decoder(before_msg_decoder(imgs_w))  # b c h w -> b k
                         lossw = loss_w(decoded, msg)
                         loss = lossw + LAMBDAI * lossi
-                        loss.backward()
-                        optimizer.step()
-                        optimizer.zero_grad()  # for sure
-            case _:
-                raise NotImplementedError
+                # case 3: max iter
+                elif proj_step_counter >= PROJ_MAX_STEP:
+                    proj_max_step += 1
+                    print(f'> given up for MAX ITER {proj_step_counter}, lossi: {lossi}')
+                    with torch.no_grad():  # just for logging w
+                        decoded = msg_decoder(before_msg_decoder(imgs_w))  # b c h w -> b k
+                        lossw = loss_w(decoded, msg)
+                        loss = lossw + LAMBDAI * lossi
+                optimizer.zero_grad()  # for sure
+            # for case 1: done proj
+            else: 
+                print(f'> loose in after {proj_step_counter}, lossi: {lossi}')
+                # go one w step after going in (since we got i, getting w is cheap)
+                decoded = msg_decoder(before_msg_decoder(imgs_w))  # b c h w -> b k
+                lossw = loss_w(decoded, msg)
+                loss = lossw + LAMBDAI * lossi
+                loss.backward()
+                optimizer.step()
+                optimizer.zero_grad()  # for sure
 
         # log stats
         diff1 = (~torch.logical_xor(decoded > 0, msg > 0))  # b k -> b k

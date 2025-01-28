@@ -541,8 +541,8 @@ def get_pipe(model_id, local_files_only, use_safetensors, torch_dtype: torch.dty
             **kwargs_from_pretrained,
         )
         pipe = DiffusionPipeline.from_pretrained(
-            # "stabilityai/stable-diffusion-xl-base-1.0", 
-            "../../cache/stable-diffusion-xl-base-1.0",
+            "stabilityai/stable-diffusion-xl-base-1.0", 
+            # "../../cache/stable-diffusion-xl-base-1.0",
             unet=unet,
             **kwargs_from_pretrained,
         )
