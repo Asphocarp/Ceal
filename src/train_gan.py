@@ -35,7 +35,8 @@ parser = argparse.ArgumentParser()
 parser.add_argument("--codename", type=str, default=None, help="None for auto-generated")
 parser.add_argument("--acc", type=utils.str2bool, default=False, help="use accelerator")
 parser.add_argument("--seed", type=int, default=42)
-parser.add_argument("--model_id", type=str, default='stabilityai/sdxl-turbo')
+parser.add_argument("--model_id", type=str, default='stabilityai/sdxl-turbo', help='huggingface id, or gan like `stylegan-xl:url`')
+# 'stylegan-xl:https://s3.eu-central-1.amazonaws.com/avg-projects/stylegan_xl/models/imagenet512.pkl'
 parser.add_argument("--local_files_only", type=utils.str2bool, default=True)
 parser.add_argument("--use_safetensors", type=utils.str2bool, default=True)
 parser.add_argument("--torch_dtype_str", type=str, default='float32')
@@ -169,6 +170,11 @@ def main(args):
         CODENAME = misc.time_str('%m%d_%H%M%S')
     TORCH_DTYPE = getattr(torch, TORCH_DTYPE_STR)
     utils.seed_everything(SEED)
+    # model type (diffusers is not for gan)
+    if MODEL_ID.startswith(('stylegan-xl:', 'stylegan3:')):
+        model_lib = 'gan'
+    else:
+        model_lib = 'diffusers'
     # pure str conf dict
     HIDDEN_DIMS = eval(HIDDEN_DIMS_STR)  # TODO safe_eval / str2list
     # ODIR: output of this run
@@ -197,16 +203,54 @@ def main(args):
         device = 'cuda' if torch.cuda.is_available() else 'cpu'
         wandb.init(project="Ceal", config=CONF_DICT, name=CODENAME)
 
-    # >> get ori vae
-    pipe = utils.get_pipe(
-        model_id=MODEL_ID,
-        local_files_only=LOCAL_FILES_ONLY,
-        use_safetensors=USE_SAFE_TENSORS,
-        torch_dtype=TORCH_DTYPE,
-    )
-    vae_ori: AutoencoderKL = pipe.vae
-    vae_ori: AutoencoderKL = vae_ori.to(device)
-    decoder_ori: Decoder = vae_ori.decoder
+    # >> get ori model
+    if model_lib == 'diffusers':
+        pipe = utils.get_pipe(
+            model_id=MODEL_ID,
+            local_files_only=LOCAL_FILES_ONLY,
+            use_safetensors=USE_SAFE_TENSORS,
+            torch_dtype=TORCH_DTYPE)
+        vae_ori: AutoencoderKL = pipe.vae
+        vae_ori: AutoencoderKL = vae_ori.to(device)
+        decoder_ori: Decoder = vae_ori.decoder
+    elif model_lib == 'gan':
+        from stylegan_xl import legacy, dnnlib
+        from stylegan_xl.torch_utils import gen_utils
+        from stylegan_xl.training.networks_stylegan3_resetting import SynthesisLayer, Generator, SynthesisInput, SynthesisNetwork
+        # load model
+        with dnnlib.util.open_url(MODEL_ID.split(':')[1]) as f:
+            G: Generator = legacy.load_network_pkl(f)['G_ema']
+        G: Generator = G.eval().requires_grad_(False).to(device)
+        # rebound methods after loading
+        G.__class__.forward = Generator.forward
+        G.synthesis.__class__.forward = SynthesisNetwork.forward
+        syns = []  # modify Synthesis layers
+        rank = CONF_DICT['lora_rank']
+        curr = 0  # current pos in flat_maps
+        for name, module in G.synthesis.named_children():
+            real_class = module._orig_class_name  # due to decorator, the class name is not SynthesisLayer
+            if real_class == 'SynthesisLayer':
+                module.__class__.forward = SynthesisLayer.forward
+                module.granularity = CONF_DICT['granularity']
+                module.rank = rank
+                match CONF_DICT['granularity']:
+                    case 'filter':
+                        partition_size = module.out_channels
+                    case 'kernel':
+                        partition_size = rank * (module.out_channels+module.in_channels)
+                    case 'float':
+                        partition_size = rank * (module.out_channels + module.in_channels*module.weight.shape[2]*module.weight.shape[3])
+                if CONF_DICT['include_bias']:
+                    part2_size = module.out_channels
+                    module.partition = [
+                        curr, curr+partition_size, curr+partition_size+part2_size]
+                    curr += partition_size+part2_size
+                else:
+                    module.partition = [curr, curr+partition_size]
+                    curr += partition_size
+                print(CONF_DICT['granularity'], module.weight.shape)
+                print(name, module.partition)
+                syns.append(module)
 
     # >> copy, get path, init mappers
     decoder_tune: Decoder = deepcopy(decoder_ori)
@@ -226,7 +270,8 @@ def main(args):
         hidden_dims=HIDDEN_DIMS,
         device=device,
     )
-    # # pipeline parallel (NOT USING NOW)
+
+    # >> pipeline parallel (NOT USING NOW)
     # if PIPELINE_PARALLEL:
     #     from parallel import pipeline_parallel_decoder
     #     pipeline_parallel_decoder(
