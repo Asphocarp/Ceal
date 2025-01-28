@@ -22,6 +22,32 @@ pip install kornia flask
 - no more `Config` dataclass / yaml config file
 - any launch-possible file accepts all args from cmd arguments
 
+
+## Getting Started
+
+```shell
+python scripts/train_mn.py -c 0
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 ## Log
 
 - dump_model_adv_act.py: dump all adv act from a model
