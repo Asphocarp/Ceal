@@ -70,7 +70,7 @@ python scripts/train_mn.py -c 3 \
 print(f'> override args: {override}')
 
 command = f"""
-CUDA_VISIBLE_DEVICES={CUDA} python src/train_gan.py \\
+CUDA_VISIBLE_DEVICES={CUDA} python src/train.py \\
     --batch_size 4 \\
     --consi 1.75 \\
     --model_id "../cache/sdxl-turbo" \\
