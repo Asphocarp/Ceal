@@ -53,7 +53,7 @@ python scripts/train_mn.py -c 1 \
     --consi 1.75
 # lcm C2.5
 python scripts/train_mn.py -c 3 \
-    --model_id "../cache/lcm-sdxl"
+    --model_id "latent-consistency/lcm-sdxl" --consi 1.75
 # DiT C2.5
 python scripts/train_mn.py -c 3 \
     --model_id "../cache/DiT-XL-2-512"
@@ -72,7 +72,7 @@ print(f'> override args: {override}')
 command = f"""
 CUDA_VISIBLE_DEVICES={CUDA} python src/train_gan.py \\
     --batch_size 4 \\
-    --consi 2.5 \\
+    --consi 1.75 \\
     --model_id "../cache/sdxl-turbo" \\
     --output_dir "output_turbo" \\
     --warmup_steps 0 \\
