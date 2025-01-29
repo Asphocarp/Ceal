@@ -72,7 +72,11 @@ class _LegacyUnpickler(pickle.Unpickler):
             return lambda b: torch.load(io.BytesIO(b), map_location='cpu')
         if module == 'torch.storage' and name == '_load_from_bytes':
             return lambda b: torch.load(io.BytesIO(b), map_location='cpu')
+        # >> before
         return super().find_class(module, name)
+        # >> after
+        # module = module.replace('timm.models.layers', 'timm.layers')
+        # return super().find_class(module, name)
 
 #----------------------------------------------------------------------------
 

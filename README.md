@@ -14,6 +14,7 @@ pip install augly UltraDict gradio
 pip install transformers --force-reinstall
 pip install lpips pycocotools pytorch_fid gradio einops wandb python-dotenv scikit-image scikit-learn 
 pip install kornia flask
+pip install imgui glfw pyopengl imageio-ffmpeg pyspng ftfy timm==0.4.12 ninja
 ```
 
 

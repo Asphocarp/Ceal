@@ -14,57 +14,19 @@ os.makedirs("output_turbo", exist_ok=True)
 
 
 '''
-EGs: 
-# Debug
-python scripts/train_mn.py -c 1 --debug true
-# Normal
-python scripts/train_mn.py -c 3
-# ResRescaled 
-python scripts/train_mn.py -c 1 \
-    --bit_length 32 --ex_type "resnet" --ex_ckpt "pretrained/resnet.pth" --consi 2.5
-# ResReLd025
-python scripts/train_mn.py -c 1 \
-    --bit_length 32 --ex_type "resnet" --ex_ckpt "pretrained/resnet.pth" --consi 2.5 \
-    --lambdai 0.025
-# ResReLd02More; but improve metrics later
-python scripts/train_mn.py -c 1 \
-    --bit_length 32 --ex_type "resnet" --ex_ckpt "pretrained/resnet.pth" --consi 2.5 \
-    --lambdai 0.02 --layer_end "up_blocks.3.resnets.0.conv1"
-# Random
-python scripts/train_mn.py -c 1 \
-    --bit_length 32 --ex_type "random" --consi 2.5
-
-    # old
-    --output_dir "output_turbo" \\
-    --layer_end "up_blocks.3.resnets.0.conv1" \\
-    --conv_out_full_out false \\
-    --steps 100000 \\
-    --consi 1.8 \\
-# Normal2.5
-python scripts/train_mn.py -c 0
-# Normal1 - 3 (8*0.25 steps)
-python scripts/train_mn.py -c 1 \
-    --consi 1.0
-python scripts/train_mn.py -c 1 \
-    --consi 1.25
-python scripts/train_mn.py -c 1 \
-    --consi 1.5
-python scripts/train_mn.py -c 1 \
-    --consi 1.75
-# lcm C2.5
-python scripts/train_mn.py -c 3 \
-    --model_id "../cache/lcm-sdxl"
-# DiT C2.5
-python scripts/train_mn.py -c 3 \
-    --model_id "../cache/DiT-XL-2-512"
-# just except last conv
-python scripts/train_mn_gan.py -c 0 --conv_out_full_out false --layer_end up_blocks.3.resnets.2.conv2
+EGs: !not run in junest!
+# e1
+python scripts/train_mn_gan.py -c 1 \
+    --model_id "stylegan-xl:https://s3.eu-central-1.amazonaws.com/avg-projects/stylegan_xl/models/imagenet512.pkl"
+# e2 include bias, consi3.5
+python scripts/train_mn_gan.py -c 3 \
+    --model_id "stylegan-xl:https://s3.eu-central-1.amazonaws.com/avg-projects/stylegan_xl/models/imagenet512.pkl" \
+    --include_bias true --consi 3.25
 '''
 print(f'> override args: {override}')
 
-    # --codename "08R_Lm-ob_R8_Hnone_I0d2_Mturbo_B48_G32" \\
 command = f"""
-CUDA_VISIBLE_DEVICES={CUDA} python src/train.py \\
+CUDA_VISIBLE_DEVICES={CUDA} python src/train_gan.py \\
     --batch_size 4 \\
     --consi 2.5 \\
     --model_id "../cache/sdxl-turbo" \\

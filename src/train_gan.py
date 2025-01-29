@@ -4,6 +4,8 @@ import os
 import sys
 import warnings
 sys.path.insert(0, os.path.dirname(__file__))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'stylegan_xl'))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'stylegan_xl', 'pg_modules'))
 warnings.filterwarnings("ignore")
 
 from typing import *
@@ -72,7 +74,7 @@ parser.add_argument("--warmup_steps", type=int, default=0)
 parser.add_argument("--cosine_lr", type=utils.str2bool, default=False)
 parser.add_argument("--consi", type=float, default=2, 
                     help="constraint for lossi, set to -1 to disable")
-parser.add_argument("--lambdai", type=float, default=0.2, 
+parser.add_argument("--lambdai", type=float, default=0.01, 
                     help='lambda for lossi')
 parser.add_argument("--save_img_freq", type=int, default=50)
 parser.add_argument("--save_ckpt_freq", type=int, default=2000)
@@ -173,6 +175,13 @@ def main(args):
     # model type (diffusers is not for gan)
     if MODEL_ID.startswith(('stylegan-xl:', 'stylegan3:')):
         model_lib = 'gan'
+        # config for gan
+        model_url = MODEL_ID.split(':', 1)[1]
+        truncation_psi: float = 1.0
+        noise_mode: str = 'const'
+        class_idx: Optional[int] = None
+        centroids_path: Optional[str] = None  # or 'https://s3.eu-central-1.amazonaws.com/avg-projects/stylegan_xl/models/imagenet_centroids.npy'
+        Gargs = {'noise_mode': noise_mode}
     else:
         model_lib = 'diffusers'
     # pure str conf dict
@@ -203,7 +212,7 @@ def main(args):
         device = 'cuda' if torch.cuda.is_available() else 'cpu'
         wandb.init(project="Ceal", config=CONF_DICT, name=CODENAME)
 
-    # >> get ori model
+    # >> get ori model; copy, get path; print total size of proxy
     if model_lib == 'diffusers':
         pipe = utils.get_pipe(
             model_id=MODEL_ID,
@@ -213,15 +222,23 @@ def main(args):
         vae_ori: AutoencoderKL = pipe.vae
         vae_ori: AutoencoderKL = vae_ori.to(device)
         decoder_ori: Decoder = vae_ori.decoder
+        decoder_tune: Decoder = deepcopy(decoder_ori)
+        decoder_tune = decoder_tune.to(device)
+        # with pathfinder
+        po = Policy(**CONF_DICT)  # TODO verify dict
+        pf = Pathfinder(po)
+        pf.explore(decoder_tune)
+        pf.print_path()
+        total_size = pf.init_model(decoder_tune)
     elif model_lib == 'gan':
         from stylegan_xl import legacy, dnnlib
         from stylegan_xl.torch_utils import gen_utils
         from stylegan_xl.training.networks_stylegan3_resetting import SynthesisLayer, Generator, SynthesisInput, SynthesisNetwork
         # load model
-        with dnnlib.util.open_url(MODEL_ID.split(':')[1]) as f:
+        with dnnlib.util.open_url(model_url) as f:
             G: Generator = legacy.load_network_pkl(f)['G_ema']
         G: Generator = G.eval().requires_grad_(False).to(device)
-        # rebound methods after loading
+        # rebound methods after loading (pathfinder)
         G.__class__.forward = Generator.forward
         G.synthesis.__class__.forward = SynthesisNetwork.forward
         syns = []  # modify Synthesis layers
@@ -248,20 +265,12 @@ def main(args):
                 else:
                     module.partition = [curr, curr+partition_size]
                     curr += partition_size
-                print(CONF_DICT['granularity'], module.weight.shape)
-                print(name, module.partition)
+                print(f'{name} {module.partition} <- {tuple(module.weight.shape)} {CONF_DICT["granularity"]}')
                 syns.append(module)
-
-    # >> copy, get path, init mappers
-    decoder_tune: Decoder = deepcopy(decoder_ori)
-    decoder_tune = decoder_tune.to(device)
-    # with pathfinder
-    po = Policy(**CONF_DICT)  # TODO verify dict
-    pf = Pathfinder(po)
-    pf.explore(decoder_tune)
-    pf.print_path()
-    total_size = pf.init_model(decoder_tune)
+        total_size = curr
     print(f'> total_size: {total_size}')
+
+    # >> init mapping model
     if ACC: accelerator.log({'total_size': total_size}, step=0)
     else: wandb.log({'total_size': total_size}, step=0)
     mn = MappingNetwork(
@@ -364,10 +373,15 @@ def main(args):
         raise NotImplementedError
 
     # >> prepare to train
-    vae_ori.eval()
-    for param in [*vae_ori.parameters()]:
-        param.requires_grad = False
-    decoder_tune.eval().requires_grad_(False)
+    match model_lib:
+        case 'diffusers':
+            vae_ori.eval()
+            for param in [*vae_ori.parameters()]:
+                param.requires_grad = False
+            decoder_tune.eval().requires_grad_(False)
+        case 'gan':
+            G.eval().requires_grad_(False)
+
     for param in [*msg_decoder.parameters()]:
         param.requires_grad = TRAIN_EX
     # for sstamp: make real msg_decoder func for 
@@ -383,7 +397,7 @@ def main(args):
             sstamp, res, message = msg_decoder_model(dummy_secret, input_)
             return message
         msg_decoder = aux
-    # mappers
+    # mapper
     all_mapper_params = []
     all_mapper_params += list(mn.parameters())
     mn.train().requires_grad_(True)
@@ -471,7 +485,10 @@ def main(args):
     else: raise NotImplementedError
 
     # >> acc for models
-    if ACC: decoder_tune, mn, vae_ori, msg_decoder = accelerator.prepare(decoder_tune, mn, vae_ori, msg_decoder)
+    if model_lib == 'diffusers':
+        if ACC: decoder_tune, mn, vae_ori, msg_decoder = accelerator.prepare(decoder_tune, mn, vae_ori, msg_decoder)
+    elif model_lib == 'gan':
+        if ACC: G, mn = accelerator.prepare(G, mn)
 
     # >> optimizer
     to_optim = all_mapper_params
@@ -490,8 +507,6 @@ def main(args):
     # loop
     for step, imgs_in in enumerate(metric_logger.log_every(train_loader, LOG_FREQ, header)):
         if USE_CACHED_LATENTS: imgs_in = imgs_in[0]  # no label
-        imgs_in = imgs_in.to(device, non_blocking=True)
-        imgs_in = imgs_in.type(TORCH_DTYPE)
         utils.adjust_learning_rate(
             optimizer, step, STEPS, WARMUP_STEPS, base_lr, cosine_lr=COSINE_LR)
         optimizer.zero_grad()
@@ -501,10 +516,21 @@ def main(args):
         msg_str = ["".join([str(int(ii)) for ii in msg.tolist()[jj]]) for jj in range(BATCH_SIZE)]
 
         # gen image
-        z = vae_ori.pass_post_quant_conv(imgs_in) if not USE_CACHED_LATENTS else imgs_in
-        imgs_res = vae_ori.decoder(z)  # TODO load cached res as well
-        flat_maps = mn(msg)
-        imgs_w = decoder_tune(z, maps=flat_maps)
+        match model_lib:
+            case 'diffusers':
+                imgs_in = imgs_in.to(device, non_blocking=True)
+                imgs_in = imgs_in.type(TORCH_DTYPE)
+                z = vae_ori.pass_post_quant_conv(imgs_in) if not USE_CACHED_LATENTS else imgs_in
+                flat_maps = mn(msg)
+                imgs_res = vae_ori.decoder(z)  # TODO load cached res as well
+                imgs_w = decoder_tune(z, maps=flat_maps)
+            case 'gan':
+                w = gen_utils.get_w_from_seed(
+                    G, BATCH_SIZE, device, truncation_psi=truncation_psi, seed=step,
+                    centroids_path=centroids_path, class_idx=class_idx)
+                flat_maps = mn(msg)
+                imgs_res = G.synthesis(w, None, **Gargs)
+                imgs_w = G.synthesis(w, flat_maps, **Gargs)
         imgs_compare = imgs_res
         lossi = loss_i(imgs_w, imgs_compare)
 
@@ -544,7 +570,11 @@ def main(args):
                         optimizer.zero_grad()
                         # > get lossi
                         flat_maps = mn(msg)
-                        imgs_w = decoder_tune(z, maps=flat_maps)
+                        match model_lib:
+                            case 'diffusers':
+                                imgs_w = decoder_tune(z, maps=flat_maps)
+                            case 'gan':
+                                imgs_w = G.synthesis(w, flat_maps, **Gargs)
                         lossi = loss_i(imgs_w, imgs_compare)
                         print(f'> going in => lossi: {lossi}')
                         proj_step_counter += 1
@@ -609,7 +639,7 @@ def main(args):
         # save images during training
         if (step + 1) % SAVE_IMG_FREQ == 0:
             if not ACC or accelerator.is_main_process:
-                if not USE_CACHED_LATENTS:
+                if model_lib == 'diffusers' and not USE_CACHED_LATENTS:
                     save_image(torch.clamp(utils_img.unnormalize_vqgan(imgs_in), 0, 1),
                         os.path.join(ODIR, 'train', f'{step:05}_{header}_orig.png'), nrow=8)
                 save_image(torch.clamp(utils_img.unnormalize_vqgan(imgs_res), 0, 1),
@@ -618,20 +648,22 @@ def main(args):
                     os.path.join(ODIR, 'train', f'{step:05}_{header}_w.png'), nrow=8)
 
         # remove all intermediate objects
-        del imgs_in, z, imgs_res, flat_maps, imgs_w, imgs_compare, lossi, decoded, lossw, loss, diff1, bit_accs, word_accs
+        del imgs_res, flat_maps, imgs_w, imgs_compare, lossi, decoded, lossw, loss, diff1, bit_accs, word_accs
+        if model_lib == 'diffusers': del imgs_in, z
+        if model_lib == 'gan': del w
 
         # validate and save checkpoint
-        if (step + 1) % SAVE_CKPT_FREQ == 0:  # or step == 0
-            # validate
+        # if (step + 1) % SAVE_CKPT_FREQ == 0 or step == 0:  # when DEBUG
+        if (step + 1) % SAVE_CKPT_FREQ == 0:
             if VALIDATE:
-                decoder_tune.eval()
+                # decoder_tune.eval()
                 val_stats = val(
-                    device, vae_ori, decoder_tune, msg_decoder, val_loader, vqgan_to_imnet, mn, step,
+                    locals(), device, msg_decoder, val_loader, vqgan_to_imnet, mn, step,
                     IMG_SIZE, VAL_BATCH_SIZE, BIT_LENGTH, LOG_FREQ, USE_CACHED_LATENTS, TORCH_DTYPE,
                     EX_CKPT, SAVE_IMG_FREQ, ODIR)
                 if ACC: accelerator.log(val_stats, step=step * accelerator.num_processes)
                 else: wandb.log(val_stats, step=step)
-                decoder_tune.train()
+                # decoder_tune.train()
             # save the latest checkpoint
             if not ACC or accelerator.is_main_process:
                 if ACC:
@@ -640,8 +672,7 @@ def main(args):
                         # 'msg_decoder': msg_decoder.state_dict(),
                         'mapping_network': accelerator.unwrap_model(mn).state_dict(),
                         'optimizer': optimizer.state_dict(),
-                        'params': dict(CONF_DICT),
-                    }
+                        'params': dict(CONF_DICT), }
                     if SAVE_ALL_CKPTS: accelerator.save(dict1, os.path.join(ODIR, f"ckpt_{step+1}.pth"))
                     else: accelerator.save(dict1, os.path.join(ODIR, f"ckpt.pth"))
                 else:
@@ -650,8 +681,7 @@ def main(args):
                         # 'msg_decoder': msg_decoder.state_dict(),
                         'mapping_network': mn.state_dict(),
                         'optimizer': optimizer.state_dict(),
-                        'params': dict(CONF_DICT),
-                    }
+                        'params': dict(CONF_DICT), }
                     if SAVE_ALL_CKPTS: torch.save(dict1, os.path.join(ODIR, f"ckpt_{step+1}.pth"))
                     else: torch.save(dict1, os.path.join(ODIR, f"ckpt.pth"))
 
@@ -664,30 +694,38 @@ def main(args):
 
 @torch.no_grad()
 def val(
-    device, vae_ori, decoder_tune, msg_decoder, val_loader, vqgan_to_imnet, mn, train_step,
+    LOCALS, device, msg_decoder, val_loader, vqgan_to_imnet, mn, train_step,
     IMG_SIZE, VAL_BATCH_SIZE, BIT_LENGTH, LOG_FREQ, USE_CACHED_LATENTS, TORCH_DTYPE,
-    EX_CKPT, SAVE_IMG_FREQ, ODIR,
+    EX_CKPT, SAVE_IMG_FREQ, ODIR, 
 ):
+    vae_ori, decoder_tune = LOCALS.get('vae_ori', None), LOCALS.get('decoder_tune', None)
+    G, model_lib, gen_utils, centroids_path, class_idx, truncation_psi, Gargs = LOCALS.get('G', None), LOCALS.get('model_lib', None), LOCALS.get('gen_utils', None), LOCALS.get('centroids_path', None), LOCALS.get('class_idx', None), LOCALS.get('truncation_psi', None), LOCALS.get('Gargs', None)
     header = 'Eval'
     metric_logger = utils.MetricLogger(delimiter="  ")
-    # for sstamp:
-    sstamp_resize = transforms.Compose([ transforms.Resize(IMG_SIZE) ])
+    sstamp_resize = transforms.Compose([ transforms.Resize(IMG_SIZE) ])  # for sstamp
     for ii, imgs_in in enumerate(metric_logger.log_every(val_loader, LOG_FREQ, header)):
-        if USE_CACHED_LATENTS: imgs_in = imgs_in[0]  # no label
-        imgs_in = imgs_in.to(device, non_blocking=True)
-        imgs_in = imgs_in.type(TORCH_DTYPE)
         # gen msg
         msg_val = torch.randint(0, 2, size=(VAL_BATCH_SIZE, BIT_LENGTH), dtype=TORCH_DTYPE).to(device, non_blocking=True)
 
         # gen image
-        z = vae_ori.pass_post_quant_conv(imgs_in) if not USE_CACHED_LATENTS else imgs_in
-        imgs_res = vae_ori.decoder(z)
-        flat_maps = mn(msg_val)
-        imgs_w = decoder_tune(z, maps=flat_maps)
+        match model_lib:
+            case 'diffusers':
+                if USE_CACHED_LATENTS: imgs_in = imgs_in[0]  # no label
+                imgs_in = imgs_in.to(device, non_blocking=True)
+                imgs_in = imgs_in.type(TORCH_DTYPE)
+                z = vae_ori.pass_post_quant_conv(imgs_in) if not USE_CACHED_LATENTS else imgs_in
+                imgs_res = vae_ori.decoder(z)
+                flat_maps = mn(msg_val)
+                imgs_w = decoder_tune(z, maps=flat_maps)
+            case 'gan':
+                w = gen_utils.get_w_from_seed(
+                    G, VAL_BATCH_SIZE, device, truncation_psi=truncation_psi, seed=ii,
+                    centroids_path=centroids_path, class_idx=class_idx)
+                flat_maps = mn(msg_val)
+                imgs_res = G.synthesis(w, None, **Gargs)
+                imgs_w = G.synthesis(w, flat_maps, **Gargs)
 
-        log_stats = {
-            "validate/psnr_val": utils_img.psnr(imgs_w, imgs_res).mean().item(),
-        }
+        log_stats = { "validate/psnr_val": utils_img.psnr(imgs_w, imgs_res).mean().item(), }
         attacks = {
             'none': lambda x: x,
             'crop_01': lambda x: utils_img.center_crop(x, 0.1),
@@ -700,7 +738,8 @@ def val(
             'brightness_2': lambda x: utils_img.adjust_brightness(x, 2),
             'jpeg_80': lambda x: utils_img.jpeg_compress(x, 80),
             'jpeg_50': lambda x: utils_img.jpeg_compress(x, 50),
-        }
+            'overlay_text': lambda x: utils_img.overlay_text(x, [76, 111, 114, 101, 109, 32, 73, 112, 115, 117, 109]),
+            'comb': lambda x: utils_img.jpeg_compress(utils_img.adjust_brightness(utils_img.center_crop(x, 0.5), 1.5), 80), }
         for name, attack in attacks.items():
             imgs_aug = attack(vqgan_to_imnet(imgs_w))
             # for sstamp, ensure resize to 400, 400
@@ -722,17 +761,20 @@ def val(
             res_filename = os.path.join(ODIR, 'validate', f'{train_step}', f'{ii:05}_val_res.png') 
             w_filename = os.path.join(ODIR, 'validate', f'{train_step}', f'{ii:05}_val_w.png')
             diff_filename = os.path.join(ODIR, 'validate', f'{train_step}', f'{ii:05}_val_zdiff.png')
-            if not USE_CACHED_LATENTS:
+            diffMid_filename = os.path.join(ODIR, 'validate', f'{train_step}', f'{ii:05}_val_zdiffMid.png')
+            if model_lib == 'diffusers' and not USE_CACHED_LATENTS:
                 save_image(torch.clamp(utils_img.unnormalize_vqgan(imgs_in), 0, 1), orig_filename, nrow=8)
             save_image(torch.clamp(utils_img.unnormalize_vqgan(imgs_res), 0, 1), res_filename, nrow=8)
             save_image(torch.clamp(utils_img.unnormalize_vqgan(imgs_w), 0, 1), w_filename, nrow=8)
-            # save the diff*10 between res and w
-            try:  # TODO optimize
+            try:  # save the diff*10 between res and w  # TODO optimize
                 img_1 = Image.open(res_filename)
                 img_2 = Image.open(w_filename)
                 diff = np.abs(np.asarray(img_1).astype(int) - np.asarray(img_2).astype(int)) * 10
                 diff = Image.fromarray(diff.astype(np.uint8))
                 diff.save(diff_filename)
+                diffMid = 128 + np.asarray(img_2).astype(int) - np.asarray(img_1).astype(int)
+                diffMid = Image.fromarray(diffMid.astype(np.uint8))
+                diffMid.save(diffMid_filename)
             except: pass
 
     print("Averaged {} stats:".format('eval'), metric_logger)
