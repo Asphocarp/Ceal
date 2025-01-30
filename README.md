@@ -44,7 +44,7 @@ python scripts/train_mn.py -c 0
     #   --save_w BOOLEAN
     #   --save_in_to TEXT
     #   --help                     Show this message and exit.
-# first time
+# G-Normal-midHalf
 python src/test.py gen \
     --ckpt output_turbo/0106_160738/ckpt.pth \
     --test_dir ../cache/val2014 \
@@ -54,22 +54,61 @@ python src/test.py gen \
     --test_batch_size 24 \
     --overwrite True \
     --cli_msg random \
-    --save_in True \
+    --save_in False \
     --save_z_res True \
-    --save_w True \
-    --save_in_to ../cache/val2014_512
+    --save_w True
+# DiT debug
 python src/test.py gen \
-    --ckpt output_turbo/0127_214457/ckpt.pth \
+    --ckpt output_turbo/0127_082600/ckpt.pth \
     --test_dir ../cache/val2014 \
     --anno ../cache/annotations/captions_val2014.json \
-    --num_imgs -1 \
+    --num_imgs 8 \
     --test_img_size 512 \
-    --test_batch_size 16 \
+    --test_batch_size 4 \
     --overwrite True \
     --cli_msg random \
     --save_in False \
     --save_z_res True \
     --save_w True
+gen --ckpt output_turbo/0127_082600/ckpt.pth 
+    --test_dir ../cache/val2014 
+    --anno ../cache/annotations/captions_val2014.json 
+    --num_imgs 8 
+    --test_img_size 512 
+    --test_batch_size 4 
+    --overwrite True 
+    --cli_msg random 
+    --save_in False 
+    --save_z_res True 
+    --save_w True
+# DiT
+python src/test.py gen \
+    --ckpt output_turbo/0127_082600/ckpt.pth \
+    --test_dir ../cache/val2014 \
+    --anno ../cache/annotations/captions_val2014.json \
+    --num_imgs -1 \
+    --test_img_size 512 \
+    --test_batch_size 24 \
+    --overwrite True \
+    --cli_msg random \
+    --save_in False \
+    --save_z_res True \
+    --save_w True
+# StyleGAN-XL (around 3h)
+CUDA_VISIBLE_DEVICES="3" python src/test.py gen \
+    --ckpt output_turbo/0129_095122/ckpt.pth \
+    --test_dir ../cache/val2014 \
+    --anno ../cache/annotations/captions_val2014.json \
+    --num_imgs -1 \
+    --test_img_size 512 \
+    --test_batch_size 24 \
+    --overwrite True \
+    --cli_msg random \
+    --save_in False \
+    --save_z_res True \
+    --save_w True
+
+python src/test.py gen \
 ```
 
 

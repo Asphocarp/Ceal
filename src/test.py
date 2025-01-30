@@ -33,15 +33,18 @@ from pathlib import Path
 from pytorch_fid.fid_score import InceptionV3, calculate_frechet_distance, compute_statistics_of_path
 from skimage.metrics import peak_signal_noise_ratio, structural_similarity
 import torch.nn as nn
+from diffusers import StableDiffusionXLPipeline, DiTPipeline
 
 device = torch.device('cuda:0' if torch.cuda.is_available() else "cpu")
 
 
-@click.group()
-def cli():
+@click.group(context_settings={"ignore_unknown_options": True})
+@click.pass_context
+def cli(ctx):
     pass
 
-@cli.command()
+@cli.command(context_settings={"ignore_unknown_options": True})
+@click.pass_context
 @click.option('--ckpt', default='outputs/random/rand1-0.pth',)
 @click.option('--test_dir', default='../cache/val2014',)
 @click.option('--anno', default='../cache/annotations/captions_val2014.json',)
@@ -50,17 +53,17 @@ def cli():
 @click.option('--test_batch_size', default=4,)
 @click.option('--overwrite', default=False,)
 @click.option('--cli_msg', default='111010110101000001010111010011010100010000100111', help='random for random msg for each image')
-# save in, z, res, w (true-in at the first time, as fid)
+# save z, res, w
 @click.option('--save_in', default=False,)
 @click.option('--save_z_res', default=True,)
 @click.option('--save_w', default=True,)
 @click.option('--save_in_to', default="../cache/val2014_512")
-def gen(ckpt, test_dir, anno, num_imgs, test_img_size, test_batch_size, overwrite, cli_msg, save_in, save_z_res, save_w, save_in_to):
+def gen(ctx, ckpt, test_dir, anno, num_imgs, test_img_size, test_batch_size, overwrite, cli_msg, save_in, save_z_res, save_w, save_in_to):
     """Gen clean&wm images from captions."""
     gen_func(ckpt, test_dir, anno, num_imgs, test_img_size, test_batch_size, overwrite, cli_msg, save_in, save_z_res, save_w, save_in_to)
 def gen_func(ckpt, test_dir, anno, num_imgs, test_img_size, test_batch_size, overwrite, cli_msg, save_in, save_z_res, save_w, save_in_to):
     # >> load ckpt (and config)
-    checkpoint = torch.load( ckpt, map_location='cpu')
+    checkpoint = torch.load(ckpt, map_location='cpu')
     CONF_DICT = checkpoint['params']
 
     # >> rename
@@ -75,7 +78,6 @@ def gen_func(ckpt, test_dir, anno, num_imgs, test_img_size, test_batch_size, ove
     BIT_LENGTH = CONF_DICT['bit_length']
     LOSSW = CONF_DICT['lossw']
     LOSSI = CONF_DICT['lossi']
-    LOG_FREQ = CONF_DICT['log_freq']
     HIDDEN_DIMS_STR = CONF_DICT['hidden_dims']
     HIDDEN_DIMS = eval(HIDDEN_DIMS_STR)  # TODO safe_eval / str2list
 
@@ -119,6 +121,7 @@ def gen_func(ckpt, test_dir, anno, num_imgs, test_img_size, test_batch_size, ove
         pf.explore(decoder_tune)
         pf.print_path()
         total_size = pf.init_model(decoder_tune)
+        pipe = pipe.to(device)  # for gen
     elif model_lib == 'gan':
         from stylegan_xl import legacy, dnnlib
         from stylegan_xl.torch_utils import gen_utils
@@ -158,8 +161,6 @@ def gen_func(ckpt, test_dir, anno, num_imgs, test_img_size, test_batch_size, ove
                 syns.append(module)
         total_size = curr
     print(f'> total_size: {total_size}')
-    # for gen
-    pipe = pipe.to(device)
 
     # >> init&load mn from ckpt
     mn = MappingNetwork(
@@ -179,7 +180,7 @@ def gen_func(ckpt, test_dir, anno, num_imgs, test_img_size, test_batch_size, ove
     if EX_TYPE in ['hidden', 'jit', 'sstamp']:
         if '.torchscript.' in EX_CKPT: msg_decoder = torch.jit.load(EX_CKPT).to(device)
         else: raise NotImplementedError  # no whitening here
-    elif EX_TYPE == 'random': # current: resnet50+normal_init_fc
+    elif EX_TYPE == 'random':  # current: resnet50+normal_init_fc
         from torchvision.models import resnet50, ResNet50_Weights
         msg_decoder = resnet50(weights=ResNet50_Weights.IMAGENET1K_V2)
         msg_decoder.fc = torch.nn.Linear(2048,BIT_LENGTH)
@@ -265,8 +266,13 @@ def gen_func(ckpt, test_dir, anno, num_imgs, test_img_size, test_batch_size, ove
     else: raise NotImplementedError
 
     # >> rng; random generator
-    latent_rng = torch.Generator()
-    latent_rng.manual_seed(0)
+    if model_lib == 'diffusers':
+        latent_rng = torch.Generator()
+        latent_rng.manual_seed(0)
+        if isinstance(pipe, DiTPipeline):
+            classid_rng = torch.Generator()
+            classid_rng.manual_seed(0)
+            classid_set = list(set(pipe.labels.values()))
     if cli_msg == 'random':
         msg_rng = torch.Generator()
         msg_rng.manual_seed(0)
@@ -294,34 +300,58 @@ def gen_func(ckpt, test_dir, anno, num_imgs, test_img_size, test_batch_size, ove
                 wfs.append((tmp, os.path.exists(tmp)))
                 tmp = os.path.join( CLEAN_MODEL_DIR, 'caption_latent', f'{img_id:06}.z')
                 zfs.append((tmp, os.path.exists(tmp)))
-            # dont gen if existent
+
+            # dont gen if existent (currently no save in)
             if save_in and (not all_exist(infs) or overwrite):
                 for img_in, (inf,infe) in zip(imgs_in, infs):
                     img_in = img_in.unsqueeze(0)
-                    save_image( torch.clamp(utils_img.unnormalize_vqgan(img_in), 0, 1), inf, nrow=8)
-            if save_z_res and (not all_exist(zfs) or overwrite):
-                # assert isinstance(pipe, StableDiffusionXLPipeline)
-                latents = pipe(prompt=captions, **utils.get_pipe_step_args(MODEL_ID), generator=latent_rng, output_type='latent',)[0]
-                latents = latents / pipe.vae.config.scaling_factor
-                latents = pipe.vae.post_quant_conv(latents)
-                # TODO no z saving for now
-                # for latent, (zf, zfe) in zip(latents, zfs):
-                #     torch.save(latent, zf)
-            else:  # load
-                latents = []
-                for zf, zfe in zfs: latents.append( torch.load(zf, map_location=device))
-                latents = torch.stack(latents)
-            if save_z_res and (not all_exist(resfs) or overwrite):
-                imgs_res = decoder_ori(latents)
-                for img_res, (rf, rfe) in zip(imgs_res, resfs):
-                    img_res = img_res.unsqueeze(0)
-                    save_image( torch.clamp(utils_img.unnormalize_vqgan(img_res), 0, 1), rf, nrow=8)
-            if save_w and (not all_exist(wfs) or overwrite):
-                flat_maps = mn(msg)
-                imgs_w = decoder_tune(latents, maps=flat_maps)
-                for img_w, (wf,wfe) in zip(imgs_w, wfs):
-                    img_w = img_w.unsqueeze(0)
-                    save_image( torch.clamp(utils_img.unnormalize_vqgan(img_w), 0, 1), wf, nrow=8)
+                    save_image(torch.clamp(utils_img.unnormalize_vqgan(img_in), 0, 1), inf, nrow=8)
+            match model_lib:
+                case 'diffusers':
+                    if save_z_res and (not all_exist(zfs) or overwrite):
+                        if isinstance(pipe, StableDiffusionXLPipeline):
+                            latents = pipe(prompt=captions, **utils.get_pipe_step_args(MODEL_ID), generator=latent_rng, output_type='latent',)[0]
+                        else:  # DiT: random classid in classid_set, latent_gen as the rng, same len with captions -> List[int]
+                            assert isinstance(pipe, DiTPipeline)
+                            rand_indices = torch.randint(0, len(classid_set), size=(len(captions),), generator=classid_rng)
+                            classids = [classid_set[idx] for idx in rand_indices.tolist()]
+                            latents = pipe(class_labels=classids, **utils.get_pipe_step_args(MODEL_ID), generator=latent_rng, output_type='latent',)[0]
+                        latents = latents / pipe.vae.config.scaling_factor
+                        latents = pipe.vae.post_quant_conv(latents)
+                        # NO Z SAVING FOR NOW
+                        # for latent, (zf, zfe) in zip(latents, zfs):
+                        #     torch.save(latent, zf)
+                    else:  # load latent instead
+                        latents = []
+                        for zf, zfe in zfs: latents.append( torch.load(zf, map_location=device))
+                        latents = torch.stack(latents)
+                    if save_z_res and (not all_exist(resfs) or overwrite):
+                        imgs_res = decoder_ori(latents)
+                        for img_res, (rf, rfe) in zip(imgs_res, resfs):
+                            img_res = img_res.unsqueeze(0)
+                            save_image( torch.clamp(utils_img.unnormalize_vqgan(img_res), 0, 1), rf, nrow=8)
+                    if save_w and (not all_exist(wfs) or overwrite):
+                        flat_maps = mn(msg)
+                        imgs_w = decoder_tune(latents, maps=flat_maps)
+                        for img_w, (wf,wfe) in zip(imgs_w, wfs):
+                            img_w = img_w.unsqueeze(0)
+                            save_image( torch.clamp(utils_img.unnormalize_vqgan(img_w), 0, 1), wf, nrow=8)
+                case 'gan':
+                    w = gen_utils.get_w_from_seed(
+                        G, test_batch_size, device, truncation_psi=truncation_psi, seed=step,
+                        centroids_path=centroids_path, class_idx=class_idx)
+                    if save_z_res and (not all_exist(resfs) or overwrite):
+                        imgs_res = G.synthesis(w, None, **Gargs)
+                        for img_res, (rf, rfe) in zip(imgs_res, resfs):
+                            img_res = img_res.unsqueeze(0)
+                            save_image( torch.clamp(utils_img.unnormalize_vqgan(img_res), 0, 1), rf, nrow=8)
+                    if save_w and (not all_exist(wfs) or overwrite):
+                        flat_maps = mn(msg)
+                        imgs_w = G.synthesis(w, flat_maps, **Gargs)
+                        for img_w, (wf,wfe) in zip(imgs_w, wfs):
+                            img_w = img_w.unsqueeze(0)
+                            save_image( torch.clamp(utils_img.unnormalize_vqgan(img_w), 0, 1), wf, nrow=8)
+                case _: raise NotImplementedError
     img_dir = os.path.join(ODIR, 'test_caption')
     img_dir_nw = os.path.join(CLEAN_MODEL_DIR, 'test_caption')
     test_result_dir = os.path.join(ODIR, 'test_caption_result')

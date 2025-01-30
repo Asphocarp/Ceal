@@ -216,6 +216,9 @@ class DiTPipeline(DiffusionPipeline):
         else:
             latents = latent_model_input
 
+        if output_type == "latent":  #! OURS
+            return (latents,)
+
         latents = 1 / self.vae.config.scaling_factor * latents
         samples = self.vae.decode(latents).sample
 
