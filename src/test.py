@@ -669,10 +669,9 @@ def test_after_gen(ckpt, output_dir, eval_imgs: bool, save_n_imgs: int, img_dir,
         print(f'>>> Saving log stats to {output_dir}...')
         df = pd.DataFrame(log_stats)
         df.to_csv(os.path.join(output_dir, 'log_stats.csv'), index=False)
-        # get avg of columns
         print(df.info())
         print(df)
-        print(df.mean(axis=0))
+        print(df.mean(axis=0))  # get avg of columns
 
 
 if __name__ == '__main__':

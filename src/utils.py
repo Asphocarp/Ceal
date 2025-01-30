@@ -169,7 +169,7 @@ def get_dataloader(
     shuffle=False, num_workers=4,
     collate_fn=collate_fn
 ):
-    """ Get dataloader for the images in the data_dir. The data_dir must be of the form: input/0/... """
+    """ Get dataloader for the images in the data_dir (ordered by filename). The data_dir must be of the form: input/0/..."""
     dataset = ImageFolder(data_dir, transform=transform)
     if num_imgs is not None:
         if shuffle: dataset = Subset(dataset, np.random.choice(len(dataset), num_imgs, replace=False))
