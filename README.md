@@ -24,6 +24,7 @@ Datasets in `../cache/`.
 # imagenet1k-val for fid
 curl -L -o ../cache/imagenet1k-val.zip \
     https://www.kaggle.com/api/v1/datasets/download/titericz/imagenet1k-val
+mkdir -p ./imagenet-val-flat && find ./imagenet-val -type f -exec mv {} ./imagenet-val-flat/ \;
 ```
 
 ## Starting-Over Tips
@@ -54,6 +55,19 @@ python src/test.py gen \
 
 # resize
 CUDA_VISIBLE_DEVICES="3" python src/test.py resize-dataset --overwrite True --batch_size 16
+mkdir -p ../cache/imagenet512 ../cache/imagenet768
+    # 95min
+CUDA_VISIBLE_DEVICES="3" python src/test.py resize-dataset \
+    --overwrite True --batch_size 4 \
+    --test_dir ../cache/imagenet-val-flat \
+    --test_img_size 512 \
+    --img_dir_fid ../cache/imagenet512
+CUDA_VISIBLE_DEVICES="3" python src/test.py resize-dataset \
+    --overwrite True --batch_size 4 \
+    --test_dir ../cache/imagenet-val-flat \
+    --test_img_size 768 \
+    --img_dir_fid ../cache/imagenet768
+
 # fidel first (infer img_dir&img_dir_nw from ckpt)
     # just fid
 CUDA_VISIBLE_DEVICES="3" python src/test.py test-after-gen \
@@ -115,6 +129,16 @@ CUDA_VISIBLE_DEVICES="3" python src/test.py gen \
     --save_in False \
     --save_z_res True \
     --save_w True
+CUDA_VISIBLE_DEVICES="3" python src/test.py test-after-gen \
+    --ckpt output_turbo/0129_095122/ckpt.pth \
+    --eval_imgs True --eval_img2img False --eval_bits False \
+    --img_dir_fid ../cache/imagenet512 \
+    --save_n_imgs 10
+CUDA_VISIBLE_DEVICES="3" python src/test.py test-after-gen \
+    --ckpt output_turbo/0129_095122/ckpt.pth \
+    --eval_imgs False --eval_img2img True --eval_bits True \
+    --img_dir_fid ../cache/imagenet512 \
+    --save_n_imgs 10 --num_imgs 3200
 ```
 
 

@@ -412,6 +412,7 @@ def cached_fid(path1, path2, batch_size=32, device='cuda:0', dims=2048, num_work
     storage_path = Path.home() / f'.cache/torch/fid/{path2.replace("/", "_")}'
     if (storage_path / 'm.pt').exists():
         print(f'> Loading cached FID stats for {path2}, clean ~/.cache/torch/fid if you want to recompute')
+        print(f'> storage_path: {storage_path}')
         m2 = torch.load(storage_path / 'm.pt')
         s2 = torch.load(storage_path / 's.pt')
     else:
@@ -516,18 +517,32 @@ def resize_dataset_func( folder_path: str, desired_size: int, output_path: str, 
         transforms.CenterCrop(desired_size),
         transforms.ToTensor(), ])
     utils.seed_everything(0)  # for loader
-    test_loader = utils.get_dataloader_with_caption(
+    # # coco?
+    # test_loader = utils.get_dataloader_with_caption(
+    #     folder_path, vqgan_transform, batch_size, num_imgs=None, shuffle=False, 
+    #     num_workers=batch_size, collate_fn=None, annotations_file = '../cache/annotations/captions_val2014.json',)
+    # for imgs_in, captions, img_ids in tqdm(test_loader):
+    #     infs = []
+    #     for img_id in img_ids:
+    #         tmp = os.path.join( output_path, f'{img_id:06}.png')
+    #         infs.append((tmp, os.path.exists(tmp)))
+    #     for img_in, (inf,_) in zip(imgs_in, infs):
+    #         if not all_exist(infs) or overwrite:
+    #             img_in = img_in.unsqueeze(0)
+    #             save_image( torch.clamp(img_in, 0, 1), inf, nrow=8)
+    data_loader = utils.get_dataloader(
         folder_path, vqgan_transform, batch_size, num_imgs=None, shuffle=False, 
-        num_workers=batch_size, collate_fn=None, annotations_file = '../cache/annotations/captions_val2014.json',)
-    for imgs_in, captions, img_ids in tqdm(test_loader):
+        num_workers=batch_size, collate_fn=None,)
+    for step, imgs_in in tqdm(enumerate(data_loader)):
         infs = []
+        img_ids = range(step*batch_size, (step+1)*batch_size)
         for img_id in img_ids:
-            tmp = os.path.join( output_path, f'{img_id:06}.png')
+            tmp = os.path.join(output_path, f'{img_id:06}.png')
             infs.append((tmp, os.path.exists(tmp)))
         for img_in, (inf,_) in zip(imgs_in, infs):
             if not all_exist(infs) or overwrite:
                 img_in = img_in.unsqueeze(0)
-                save_image( torch.clamp(img_in, 0, 1), inf, nrow=8)
+                save_image(torch.clamp(img_in, 0, 1), inf, nrow=8)
 
 
 @cli.command()
