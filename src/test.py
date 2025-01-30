@@ -675,19 +675,5 @@ def test_after_gen(ckpt, output_dir, eval_imgs: bool, save_n_imgs: int, img_dir,
         print(df.mean(axis=0))
 
 
-@cli.command()
-@click.pass_context
-def test_fidel( ctx, ):
-    # ctx.invoke(gen, ckpt=ckpt, test_dir=test_dir, anno=anno, num_imgs=num_imgs, test_img_size=test_img_size, test_batch_size=test_batch_size, overwrite=overwrite, cli_msg=cli_msg, save_in=save_in, save_z_res=save_z_res, save_w=save_w, save_in_to=save_in_to)
-    # ctx.invoke(test_fidel_after_gen, TODO)
-    pass
-
-
-@cli.command()
-def test_robust():
-    """Robustness"""
-    pass
-
-
 if __name__ == '__main__':
     cli()
