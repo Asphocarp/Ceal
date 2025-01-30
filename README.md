@@ -14,9 +14,17 @@ pip install augly UltraDict gradio
 pip install transformers --force-reinstall
 pip install lpips pycocotools pytorch_fid gradio einops wandb python-dotenv scikit-image scikit-learn 
 pip install kornia flask
-pip install imgui glfw pyopengl imageio-ffmpeg pyspng ftfy timm==0.4.12 ninja
+pip install imgui glfw pyopengl imageio-ffmpeg pyspng ftfy timm==0.4.12 ninja  # for StyleGAN
 ```
 
+Datasets in `../cache/`.
+
+```shell
+# COCO [TODO]
+# imagenet1k-val for fid
+curl -L -o ../cache/imagenet1k-val.zip \
+    https://www.kaggle.com/api/v1/datasets/download/titericz/imagenet1k-val
+```
 
 ## Starting-Over Tips
 
@@ -27,24 +35,10 @@ pip install imgui glfw pyopengl imageio-ffmpeg pyspng ftfy timm==0.4.12 ninja
 ## Getting Started
 
 ```shell
+# train
 python scripts/train_mn.py -c 0
 
-# test
-    # Options:
-    #   --ckpt TEXT
-    #   --test_dir TEXT
-    #   --anno TEXT
-    #   --num_imgs INTEGER         -1 for all
-    #   --test_img_size INTEGER
-    #   --test_batch_size INTEGER
-    #   --overwrite BOOLEAN
-    #   --cli_msg TEXT             random for random msg for each image
-    #   --save_in BOOLEAN
-    #   --save_z_res BOOLEAN
-    #   --save_w BOOLEAN
-    #   --save_in_to TEXT
-    #   --help                     Show this message and exit.
-# G-Normal-midHalf
+# Turbo G-Normal-midHalf
 python src/test.py gen \
     --ckpt output_turbo/0106_160738/ckpt.pth \
     --test_dir ../cache/val2014 \
@@ -57,30 +51,43 @@ python src/test.py gen \
     --save_in False \
     --save_z_res True \
     --save_w True
-# DiT debug
-python src/test.py gen \
-    --ckpt output_turbo/0127_082600/ckpt.pth \
+
+# resize
+CUDA_VISIBLE_DEVICES="3" python src/test.py resize-dataset --overwrite True --batch_size 16
+# fidel first (infer img_dir&img_dir_nw from ckpt)
+    # just fid
+CUDA_VISIBLE_DEVICES="3" python src/test.py test-after-gen \
+    --ckpt output_turbo/0106_160738/ckpt.pth \
+    --eval_imgs True --eval_img2img False --eval_bits False \
+    --img_dir_fid ../cache/val2014_512 \
+    --save_n_imgs 10
+    # img2img 45min(for 41k image)
+CUDA_VISIBLE_DEVICES="3" python src/test.py test-after-gen \
+    --ckpt output_turbo/0106_160738/ckpt.pth \
+    --eval_imgs True --eval_img2img True --eval_bits False \
+    --img_dir_fid ../cache/val2014_512 \
+    --save_n_imgs 10
+    # just bits 70min; B32=>13G; 6400img=>10min
+CUDA_VISIBLE_DEVICES="3" python src/test.py test-after-gen \
+    --ckpt output_turbo/0106_160738/ckpt.pth \
+    --eval_imgs False --eval_img2img False --eval_bits True \
+    --num_imgs 6400 \
+    --save_n_imgs 10
+
+# ---
+# LCM (only 768, see get_pipe_step_args; 13h)
+CUDA_VISIBLE_DEVICES="1" python src/test.py gen \
+    --ckpt output_turbo/0130_033407/ckpt.pth \
     --test_dir ../cache/val2014 \
     --anno ../cache/annotations/captions_val2014.json \
-    --num_imgs 8 \
-    --test_img_size 512 \
+    --num_imgs -1 \
     --test_batch_size 4 \
     --overwrite True \
     --cli_msg random \
     --save_in False \
     --save_z_res True \
     --save_w True
-gen --ckpt output_turbo/0127_082600/ckpt.pth 
-    --test_dir ../cache/val2014 
-    --anno ../cache/annotations/captions_val2014.json 
-    --num_imgs 8 
-    --test_img_size 512 
-    --test_batch_size 4 
-    --overwrite True 
-    --cli_msg random 
-    --save_in False 
-    --save_z_res True 
-    --save_w True
+
 # DiT
 python src/test.py gen \
     --ckpt output_turbo/0127_082600/ckpt.pth \
@@ -94,6 +101,7 @@ python src/test.py gen \
     --save_in False \
     --save_z_res True \
     --save_w True
+
 # StyleGAN-XL (around 3h)
 CUDA_VISIBLE_DEVICES="3" python src/test.py gen \
     --ckpt output_turbo/0129_095122/ckpt.pth \
@@ -107,8 +115,6 @@ CUDA_VISIBLE_DEVICES="3" python src/test.py gen \
     --save_in False \
     --save_z_res True \
     --save_w True
-
-python src/test.py gen \
 ```
 
 

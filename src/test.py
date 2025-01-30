@@ -365,7 +365,7 @@ def save_imgs(img_dir, img_dir_nw, save_dir, num_imgs=None, mult=10):
     filenames = [filename for filename in filenames if filename.endswith('.png')]
     filenames.sort()
     if num_imgs is not None: filenames = filenames[:num_imgs]
-    for ii, filename in enumerate(tqdm.tqdm(filenames)):
+    for ii, filename in enumerate(tqdm(filenames)):
         # remove "_***" part in the stem as nw_filename
         nw_filename = Path(filename)
         nw_filename = nw_filename.with_stem(nw_filename.stem.split('_')[0])
@@ -385,7 +385,7 @@ def get_img_metric(img_dir, img_dir_nw, num_imgs=None):
     filenames.sort()
     if num_imgs is not None: filenames = filenames[:num_imgs]
     log_stats = []
-    for ii, filename in enumerate(tqdm.tqdm(filenames)):
+    for ii, filename in enumerate(tqdm(filenames)):
         nw_filename = Path(filename)
         nw_filename = nw_filename.with_stem(nw_filename.stem.split('_')[0])
         nw_filename = str(nw_filename)
@@ -402,6 +402,7 @@ def get_img_metric(img_dir, img_dir_nw, num_imgs=None):
     return log_stats
 
 def cached_fid(path1, path2, batch_size=32, device='cuda:0', dims=2048, num_workers=10):
+    '''cached fid for path2'''
     for p in [path1, path2]:
         if not os.path.exists(p):
             raise RuntimeError('Invalid path: %s' % p)
@@ -410,6 +411,7 @@ def cached_fid(path1, path2, batch_size=32, device='cuda:0', dims=2048, num_work
     # cache path2
     storage_path = Path.home() / f'.cache/torch/fid/{path2.replace("/", "_")}'
     if (storage_path / 'm.pt').exists():
+        print(f'> Loading cached FID stats for {path2}, clean ~/.cache/torch/fid if you want to recompute')
         m2 = torch.load(storage_path / 'm.pt')
         s2 = torch.load(storage_path / 's.pt')
     else:
@@ -424,20 +426,31 @@ def cached_fid(path1, path2, batch_size=32, device='cuda:0', dims=2048, num_work
     return fid_value
 
 @torch.no_grad()
-def get_bit_accs(img_dir: str, msg_decoder: nn.Module, key: torch.Tensor, batch_size: int = 16, attacks: dict = {}):
-    # resize crop
-    transform = transforms.Compose([
+def get_bit_accs(
+    img_dir: str, msg_decoder: nn.Module, key: torch.Tensor, batch_size: int = 16, attacks: dict = {}, num_imgs: int = None):
+    transform = transforms.Compose([  # resize crop
         transforms.ToTensor(),
         transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[ 0.229, 0.224, 0.225]), ])
-    data_loader = utils.get_dataloader( img_dir, transform, batch_size=batch_size, collate_fn=None)
-
+    data_loader = utils.get_dataloader(img_dir, transform, batch_size=batch_size, num_imgs=num_imgs, collate_fn=None)
     log_stats = {ii: {} for ii in range(len(data_loader.dataset))}
-    for ii, imgs in enumerate(tqdm.tqdm(data_loader)):
+
+    STATIC_KEY = key.ndim == 1
+    if STATIC_KEY: static_keys = key.repeat(batch_size, 1)
+    else: key_bths = key.split(batch_size, dim=0)
+    print(f'>>> STATIC_KEY: {STATIC_KEY}')
+
+    for ii, imgs in enumerate(tqdm(data_loader)):
         imgs = imgs.to(device)
-        keys = key.repeat(imgs.shape[0], 1)
         for name, attack in attacks.items():
             imgs_aug = attack(imgs)
             decoded = msg_decoder(imgs_aug)  # b c h w -> b k
+            if STATIC_KEY: keys = static_keys
+            else: keys = key_bths[ii]
+            # if DEBUG:  # show `decoded>0` and `keys>0` as string
+            #     decoded_str = "".join([('1' if el>0 else '0') for el in decoded[0].detach()])
+            #     keys_str = "".join([('1' if el else '0') for el in keys[0].detach()])
+            #     print(f'>>> Decoded: {decoded_str}')
+            #     print(f'>>> Keys:    {keys_str}')
             diff = (~torch.logical_xor(decoded > 0, keys > 0))  # b k -> b k
             bit_accs = torch.sum(diff, dim=-1) / diff.shape[-1]  # b k -> b
             word_accs = (bit_accs == 1)  # b
@@ -446,19 +459,16 @@ def get_bit_accs(img_dir: str, msg_decoder: nn.Module, key: torch.Tensor, batch_
                 log_stat = log_stats[img_num]
                 log_stat[f'bit_acc_{name}'] = bit_accs[jj].item()
                 log_stat[f'word_acc_{name}'] = 1.0 if word_accs[jj].item() else 0.0
-
     log_stats = [{'img': img_num, **log_stats[img_num]} for img_num in range(len(data_loader.dataset))]
     return log_stats
 
 @torch.no_grad()
 def get_msgs(img_dir: str, msg_decoder: nn.Module, batch_size: int = 16, attacks: dict = {}):
-    # resize crop
-    transform = transforms.Compose([
-        transforms.ToTensor(),
+    transform = transforms.Compose([transforms.ToTensor(),  # resize crop
         transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[ 0.229, 0.224, 0.225]), ])
-    data_loader = utils.get_dataloader( img_dir, transform, batch_size=batch_size, collate_fn=None)
+    data_loader = utils.get_dataloader(img_dir, transform, batch_size=batch_size, collate_fn=None)
     log_stats = {ii: {} for ii in range(len(data_loader.dataset))}
-    for ii, imgs in enumerate(tqdm.tqdm(data_loader)):
+    for ii, imgs in enumerate(tqdm(data_loader)):
         imgs = imgs.to(device)
         for name, attack in attacks.items():
             imgs_aug = attack(imgs)
@@ -466,44 +476,103 @@ def get_msgs(img_dir: str, msg_decoder: nn.Module, batch_size: int = 16, attacks
             for jj in range(decoded.shape[0]):
                 img_num = ii*batch_size+jj
                 log_stat = log_stats[img_num]
-                log_stat[f'decoded_{name}'] = "".join(
-                    [('1' if el else '0') for el in decoded[jj].detach()])
+                log_stat[f'decoded_{name}'] = "".join([('1' if el else '0') for el in decoded[jj].detach()])
     log_stats = [{'img': img_num, **log_stats[img_num]} for img_num in range(len(data_loader.dataset))]
     return log_stats
+
+@torch.no_grad()
+def get_keys_in_filenames(img_dir: str):
+    """
+    Filename format: 000000_010101010(bit_length).png"
+    return keys: list[str]
+    """
+    filenames = os.listdir(img_dir)
+    filenames = [filename for filename in filenames if filename.endswith('.png')]  # remove all filenames that are not png
+    filenames.sort()
+    stems = [Path(filename).stem for filename in filenames]
+    keys = [stem.split('_')[1] for stem in stems]
+    return keys
+
+
+@cli.command()
+@click.option('--test_dir', default='../cache/val2014',)
+@click.option('--img_dir_fid', default='../cache/val2014_512',)
+@click.option('--test_img_size', default=512,)
+@click.option('--batch_size', default=4,)
+@click.option('--overwrite', default=False,)
+def resize_dataset(test_dir, img_dir_fid, test_img_size, batch_size, overwrite,):
+    '''Resize dataset (for FID test).'''
+    print(f'>>> Resizing dataset...')
+    print(f'>>> test_dir: {test_dir}')
+    print(f'>>> img_dir_fid: {img_dir_fid}')
+    print(f'>>> test_img_size: {test_img_size}')
+    print(f'>>> batch_size: {batch_size}')
+    print(f'>>> overwrite: {overwrite}')
+    resize_dataset_func(test_dir, test_img_size, img_dir_fid, batch_size, overwrite)
+def resize_dataset_func( folder_path: str, desired_size: int, output_path: str, batch_size: int, overwrite: bool):
+    os.makedirs(output_path, exist_ok=True)  # list all files in the directory
+    vqgan_transform = transforms.Compose([
+        transforms.Resize(desired_size),
+        transforms.CenterCrop(desired_size),
+        transforms.ToTensor(), ])
+    utils.seed_everything(0)  # for loader
+    test_loader = utils.get_dataloader_with_caption(
+        folder_path, vqgan_transform, batch_size, num_imgs=None, shuffle=False, 
+        num_workers=batch_size, collate_fn=None, annotations_file = '../cache/annotations/captions_val2014.json',)
+    for imgs_in, captions, img_ids in tqdm(test_loader):
+        infs = []
+        for img_id in img_ids:
+            tmp = os.path.join( output_path, f'{img_id:06}.png')
+            infs.append((tmp, os.path.exists(tmp)))
+        for img_in, (inf,_) in zip(imgs_in, infs):
+            if not all_exist(infs) or overwrite:
+                img_in = img_in.unsqueeze(0)
+                save_image( torch.clamp(img_in, 0, 1), inf, nrow=8)
 
 
 @cli.command()
 # major
-@click.option('--ckpt', type=str, default="")
+@click.option('--ckpt', type=str, default='')
 @click.option('--eval_imgs', type=bool, default=True)
 @click.option('--eval_img2img', type=bool, default=True)
 @click.option('--eval_bits', type=bool, default=False)
-@click.option('--img_dir', type=str, default="")
-@click.option('--img_dir_nw', type=str, default="")
-@click.option('--img_dir_fid', type=str, default="")
-@click.option('--output_dir', type=str, default="output/")
+@click.option('--img_dir', type=str, default='')  # infer
+@click.option('--img_dir_nw', type=str, default='')  # infer
+@click.option('--img_dir_fid', type=str, default='')
+@click.option('--output_dir', type=str, default='')  # infer
 @click.option('--save_n_imgs', type=int, default=10)
 # minor
 @click.option('--decode_only', type=bool, default=False)
 @click.option('--key_str', type=str, default="111010110101000001010111010011010100010000100111")
 @click.option('--attack_mode', type=str, default="all")
 @click.option('--dec_batch_size', type=int, default=32)
-@click.option('--num_imgs', type=int, default=None)
-def test_fidel_after_gen(ckpt, output_dir, eval_imgs: bool, save_n_imgs: int, img_dir, img_dir_nw, img_dir_fid, eval_img2img: bool, eval_bits: bool, decode_only: bool, key_str, attack_mode, dec_batch_size, num_imgs,):
+@click.option('--num_imgs', type=int, default=None)  # None for all
+@click.option('--static_key', type=bool, default=False)
+def test_after_gen(ckpt, output_dir, eval_imgs: bool, save_n_imgs: int, img_dir, img_dir_nw, img_dir_fid, eval_img2img: bool, eval_bits: bool, decode_only: bool, key_str, attack_mode, dec_batch_size, num_imgs, static_key):
     """FID/PSNR/SSIM (test_caption)"""
     #>> prepare
     # load ckpt and config
-    ckpt = torch.load(ckpt, map_location='cpu')
-    CONF_DICT = ckpt['params']
+    checkpoint = torch.load(ckpt, map_location='cpu')
+    CONF_DICT = checkpoint['params']
     EX_CKPT = CONF_DICT['ex_ckpt']
     EX_TYPE = CONF_DICT['ex_type']
     BIT_LENGTH = CONF_DICT['bit_length']
     SEED = CONF_DICT['seed']
-    # prepare
-    utils.seed_everything(SEED)
+    MODEL_ID = CONF_DICT['model_id']
+    del checkpoint
+    # infer dirs if None
+    ODIR = os.path.dirname(ckpt)
+    ARK_DIR = os.path.dirname(ODIR)
+    CLEAN_MODEL_DIR = os.path.join(ARK_DIR, '_clean_', MODEL_ID.replace('/', '_'))
+    if img_dir == '': img_dir = os.path.join(ODIR, 'test_caption')
+    if img_dir_nw == '': img_dir_nw = os.path.join(CLEAN_MODEL_DIR, 'test_caption')
+    if eval_imgs and img_dir_fid == '': raise ValueError('img_dir_fid is required')
+    if output_dir == '': output_dir = os.path.join(ODIR, 'test_caption_result')
     save_img_dir = os.path.join(output_dir, 'imgs')
     os.makedirs(output_dir, exist_ok=True)
     os.makedirs(save_img_dir, exist_ok=True)
+    # prepare
+    utils.seed_everything(SEED)
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     #>> eval imgs
@@ -513,7 +582,7 @@ def test_fidel_after_gen(ckpt, output_dir, eval_imgs: bool, save_n_imgs: int, im
             save_imgs(img_dir, img_dir_nw, save_img_dir, num_imgs=save_n_imgs)
         if eval_img2img:
             print(f'>>> Computing img-2-img stats...')
-            img_metrics = get_img_metric( img_dir, img_dir_nw, num_imgs=num_imgs)
+            img_metrics = get_img_metric(img_dir, img_dir_nw, num_imgs=num_imgs)
             img_df = pd.DataFrame(img_metrics)
             img_df.to_csv(os.path.join(output_dir, 'img_metrics.csv'), index=False)
             ssims = img_df['ssim'].tolist()
@@ -586,14 +655,24 @@ def test_fidel_after_gen(ckpt, output_dir, eval_imgs: bool, save_n_imgs: int, im
                 'comb': lambda x: utils_img.jpeg_compress(utils_img.adjust_brightness(utils_img.center_crop(x, 0.5), 1.5), 80), }
         if decode_only:
             log_stats = get_msgs(img_dir, msg_decoder, batch_size=dec_batch_size, attacks=attacks)
-        else:  # Creating key
+        elif static_key:
+            print(f'>>> Using static key: {key_str}')
             key = torch.tensor([k == '1' for k in key_str]).to(device)
             log_stats = get_bit_accs( img_dir, msg_decoder, key, batch_size=dec_batch_size, attacks=attacks)
+        else:  # get key from file names
+            print(f'>>> Using keys in filenames...')
+            key_str_list = get_keys_in_filenames(img_dir)
+            keys = [torch.tensor([k == '1' for k in key_str]).to(device) for key_str in key_str_list]
+            keys = torch.stack(keys, dim=0)
+            log_stats = get_bit_accs(img_dir, msg_decoder, keys, batch_size=dec_batch_size, attacks=attacks, num_imgs=num_imgs)
 
         print(f'>>> Saving log stats to {output_dir}...')
         df = pd.DataFrame(log_stats)
         df.to_csv(os.path.join(output_dir, 'log_stats.csv'), index=False)
+        # get avg of columns
+        print(df.info())
         print(df)
+        print(df.mean(axis=0))
 
 
 @cli.command()

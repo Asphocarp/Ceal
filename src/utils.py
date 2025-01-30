@@ -172,7 +172,8 @@ def get_dataloader(
     """ Get dataloader for the images in the data_dir. The data_dir must be of the form: input/0/... """
     dataset = ImageFolder(data_dir, transform=transform)
     if num_imgs is not None:
-        dataset = Subset(dataset, np.random.choice(len(dataset), num_imgs, replace=False))
+        if shuffle: dataset = Subset(dataset, np.random.choice(len(dataset), num_imgs, replace=False))
+        else: dataset = Subset(dataset, range(num_imgs))
     return DataLoader(dataset, batch_size=batch_size, shuffle=shuffle, num_workers=num_workers, pin_memory=True,
                       drop_last=False, collate_fn=collate_fn)
 
@@ -181,7 +182,7 @@ def get_dataloader_with_caption(
     batch_size=128, num_imgs=None, 
     shuffle=False, num_workers=4,
     collate_fn=collate_fn,
-    annotations_file = '../../cache/annotations/captions_val2014.json',
+    annotations_file = '../cache/annotations/captions_val2014.json',
 ):
     """ Get dataloader for the images in the data_dir. The data_dir must be of the form: input/0/... """
     dataset = ImageDatasetWithCaption(data_dir, transform=transform,
@@ -520,47 +521,36 @@ def get_pipe(model_id, local_files_only, use_safetensors, torch_dtype: torch.dty
         "use_safetensors": use_safetensors,
         "torch_dtype": torch_dtype,
         "variant": "fp16" if torch_dtype == torch.float16 else None,
-        "add_watermarker": False,
-    }
+        "add_watermarker": False, }
     if 'sdxl-turbo' in model_id:
-        pipe = DiffusionPipeline.from_pretrained(
-            model_id,
-            **kwargs_from_pretrained,
-        )
+        pipe = DiffusionPipeline.from_pretrained( model_id, **kwargs_from_pretrained,)
     elif 'lcm-sdxl' in model_id:
         unet = UNet2DConditionModel.from_pretrained(
             # "latent-consistency/lcm-sdxl",
             # "../../cache/lcm-sdxl",
-            model_id,
-            **kwargs_from_pretrained,
-        )
+            model_id, **kwargs_from_pretrained,)
         pipe = DiffusionPipeline.from_pretrained(
             "stabilityai/stable-diffusion-xl-base-1.0", 
             # "../../cache/stable-diffusion-xl-base-1.0",
-            unet=unet,
-            **kwargs_from_pretrained,
-        )
+            unet=unet, **kwargs_from_pretrained,)
         pipe.scheduler = LCMScheduler.from_config(pipe.scheduler.config)
+        # print(">> TORCH.COMPILE UNET")
+        # pipe.unet = torch.compile(pipe.unet, mode="reduce-overhead", fullgraph=True)
     elif 'stable-diffusion-xl-base-1.0' in model_id:
         pipe = DiffusionPipeline.from_pretrained(
             # "stabilityai/stable-diffusion-xl-base-1.0", 
             # "../../cache/stable-diffusion-xl-base-1.0",
-            model_id,
-            **kwargs_from_pretrained,
-        )
-        pipe.unet = torch.compile(pipe.unet, mode="reduce-overhead", fullgraph=True)
+            model_id, **kwargs_from_pretrained,)
+        # print(">> TORCH.COMPILE UNET")
+        # pipe.unet = torch.compile(pipe.unet, mode="reduce-overhead", fullgraph=True)
     elif 'stable-diffusion-2-1' in model_id:
-        pipe = StableDiffusionPipeline.from_pretrained(
-            model_id, 
-            **kwargs_from_pretrained,
-        )
+        pipe = StableDiffusionPipeline.from_pretrained(model_id, **kwargs_from_pretrained,)
         pipe.scheduler = DPMSolverMultistepScheduler.from_config(pipe.scheduler.config)
     elif 'DiT-XL-2-512' in model_id:
-        pipe = DiTPipeline.from_pretrained(
-            model_id, 
-            **kwargs_from_pretrained,
-        )
+        pipe = DiTPipeline.from_pretrained(model_id, **kwargs_from_pretrained,)
         pipe.scheduler = DPMSolverMultistepScheduler.from_config(pipe.scheduler.config)
+        # print(">> TORCH.COMPILE UNET")
+        # pipe.unet = torch.compile(pipe.unet, mode="reduce-overhead", fullgraph=True)
     else:
         raise NotImplemented
     return pipe
@@ -574,30 +564,25 @@ def get_pipe_step_args(model_id):
             "num_inference_steps": 1,
             "guidance_scale": 0.0,
             "height": 512,
-            "width": 512,
-        }
+            "width": 512, }
     elif 'lcm-sdxl' in model_id:
-        # num_inference_steps=4, guidance_scale=1.0
+        # must 768
         args = {
-            "num_inference_steps": 4,
-            "guidance_scale": 1.0,
-            "height": 768,
+            "num_inference_steps": 4,  # 2~4
+            "guidance_scale": 8.0,  # 0~8
+            "height": 768,  
             "width": 768,
         }
     elif 'stable-diffusion-xl-base-1.0' in model_id:
         args = {
-            "height": 768,
-            "width": 768,
+            "height": 512,  # or 768
+            "width": 512,  # or 768
         }
     elif 'stable-diffusion-2-1' in model_id:
         args = {
             "height": 512,
-            "width": 512,
-        }
+            "width": 512, }
     elif 'DiT-XL-2-512' in model_id:
-        args = {
-            "num_inference_steps": 25,
-        }
-    else:
-        raise NotImplemented
+        args = { "num_inference_steps": 25, }
+    else: raise NotImplemented
     return args
