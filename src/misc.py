@@ -4,6 +4,7 @@ import pytz
 import datetime
 import functools
 import subprocess
+import contextlib
 
 
 os_system = functools.partial(subprocess.call, shell=True)
@@ -29,3 +30,28 @@ def is_pow2n(x):
 
 def time_str(fmt='[%m-%d %H:%M:%S]'):
     return datetime.datetime.now(tz=pytz.timezone('Asia/Shanghai')).strftime(fmt)
+
+
+def all_exist(fs):
+    for f in fs:
+        if not f[1]:
+            return False
+    return True
+
+
+@contextlib.contextmanager
+def tee_output(file, mode='w'):
+    original_stdout = sys.stdout
+    with open(file, mode) as f:
+        class Tee:
+            def write(self, obj):
+                original_stdout.write(obj)
+                f.write(obj)
+            def flush(self):
+                original_stdout.flush()
+                f.flush()
+        sys.stdout = Tee()
+        try:
+            yield
+        finally:
+            sys.stdout = original_stdout

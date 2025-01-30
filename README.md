@@ -28,6 +28,48 @@ pip install imgui glfw pyopengl imageio-ffmpeg pyspng ftfy timm==0.4.12 ninja
 
 ```shell
 python scripts/train_mn.py -c 0
+
+# test
+    # Options:
+    #   --ckpt TEXT
+    #   --test_dir TEXT
+    #   --anno TEXT
+    #   --num_imgs INTEGER         -1 for all
+    #   --test_img_size INTEGER
+    #   --test_batch_size INTEGER
+    #   --overwrite BOOLEAN
+    #   --cli_msg TEXT             random for random msg for each image
+    #   --save_in BOOLEAN
+    #   --save_z_res BOOLEAN
+    #   --save_w BOOLEAN
+    #   --save_in_to TEXT
+    #   --help                     Show this message and exit.
+# first time
+python src/test.py gen \
+    --ckpt output_turbo/0106_160738/ckpt.pth \
+    --test_dir ../cache/val2014 \
+    --anno ../cache/annotations/captions_val2014.json \
+    --num_imgs -1 \
+    --test_img_size 512 \
+    --test_batch_size 24 \
+    --overwrite True \
+    --cli_msg random \
+    --save_in True \
+    --save_z_res True \
+    --save_w True \
+    --save_in_to ../cache/val2014_512
+python src/test.py gen \
+    --ckpt output_turbo/0127_214457/ckpt.pth \
+    --test_dir ../cache/val2014 \
+    --anno ../cache/annotations/captions_val2014.json \
+    --num_imgs -1 \
+    --test_img_size 512 \
+    --test_batch_size 16 \
+    --overwrite True \
+    --cli_msg random \
+    --save_in False \
+    --save_z_res True \
+    --save_w True
 ```
 
 

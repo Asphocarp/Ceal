@@ -570,7 +570,8 @@ def get_pipe_step_args(model_id):
         # num_inference_steps=4, guidance_scale=0.0
         # height=512, width=512,
         args = {
-            "num_inference_steps": 4,
+            # "num_inference_steps": 4,
+            "num_inference_steps": 1,
             "guidance_scale": 0.0,
             "height": 512,
             "width": 512,

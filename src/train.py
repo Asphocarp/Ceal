@@ -124,7 +124,7 @@ def main(args):
     SEED = args.seed
     MODEL_ID = args.model_id
     LOCAL_FILES_ONLY = args.local_files_only
-    USE_SAFE_TENSORS = args.use_safetensors
+    USE_SAFETENSORS = args.use_safetensors
     TORCH_DTYPE_STR = args.torch_dtype_str
     BIT_LENGTH = args.bit_length
     HIDDEN_DIMS_STR = args.hidden_dims
@@ -217,7 +217,7 @@ def main(args):
         pipe = utils.get_pipe(
             model_id=MODEL_ID,
             local_files_only=LOCAL_FILES_ONLY,
-            use_safetensors=USE_SAFE_TENSORS,
+            use_safetensors=USE_SAFETENSORS,
             torch_dtype=TORCH_DTYPE)
         vae_ori: AutoencoderKL = pipe.vae
         vae_ori: AutoencoderKL = vae_ori.to(device)
@@ -585,7 +585,7 @@ def main(args):
                         if last_lossi < lossi:
                             ascent_step += 1
                             print(f'> given up for increasing lossi: {last_lossi} -> {lossi}')
-                            del last_lossi
+                            # del last_lossi
                             with torch.no_grad():  # just for logging w
                                 decoded = msg_decoder(before_msg_decoder(imgs_w))  # b c h w -> b k
                                 lossw = loss_w(decoded, msg)
@@ -647,10 +647,10 @@ def main(args):
                 save_image(torch.clamp(utils_img.unnormalize_vqgan(imgs_w), 0, 1),
                     os.path.join(ODIR, 'train', f'{step:05}_{header}_w.png'), nrow=8)
 
-        # remove all intermediate objects
-        del imgs_res, flat_maps, imgs_w, imgs_compare, lossi, decoded, lossw, loss, diff1, bit_accs, word_accs
-        if model_lib == 'diffusers': del imgs_in, z
-        if model_lib == 'gan': del w
+        # # remove all intermediate objects
+        # del imgs_res, flat_maps, imgs_w, imgs_compare, lossi, decoded, lossw, loss, diff1, bit_accs, word_accs
+        # if model_lib == 'diffusers': del imgs_in, z
+        # if model_lib == 'gan': del w
 
         # validate and save checkpoint
         # if (step + 1) % SAVE_CKPT_FREQ == 0 or step == 0:  # when DEBUG

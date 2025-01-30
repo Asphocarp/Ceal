@@ -103,8 +103,8 @@ CUDA_VISIBLE_DEVICES={CUDA} python src/train.py \\
     --granularity "kernel" \\
     --layer_selection "layer_range" \\
     --layer_begin "up_blocks.1.resnets.0.conv1" \\
-    --layer_end "conv_out" \\
-    --conv_out_full_out true \\
+    --layer_end "up_blocks.3.resnets.2.conv2" \\
+    --conv_out_full_out false \\
     --conv_in_null_in true \\
     --use_lora true \\
     --lora_rank 8 \\
