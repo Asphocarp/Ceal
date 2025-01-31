@@ -401,7 +401,7 @@ def get_img_metric(img_dir, img_dir_nw, num_imgs=None):
         log_stats.append(log_stat)
     return log_stats
 
-def cached_fid(path1, path2, batch_size=32, device='cuda:0', dims=2048, num_workers=10):
+def cached_fid(path1, path2, batch_size=32, device='cuda:0', dims=2048, num_workers=10, overwrite=False):
     '''cached fid for path2'''
     for p in [path1, path2]:
         if not os.path.exists(p):
@@ -410,7 +410,7 @@ def cached_fid(path1, path2, batch_size=32, device='cuda:0', dims=2048, num_work
     model = InceptionV3([block_idx]).to(device)
     # cache path2
     storage_path = Path.home() / f'.cache/torch/fid/{path2.replace("/", "_")}'
-    if (storage_path / 'm.pt').exists():
+    if (storage_path / 'm.pt').exists() and not overwrite:
         print(f'> Loading cached FID stats for {path2}, clean ~/.cache/torch/fid if you want to recompute')
         print(f'> storage_path: {storage_path}')
         m2 = torch.load(storage_path / 'm.pt')
@@ -613,9 +613,10 @@ def test_after_gen(ckpt, output_dir, eval_imgs: bool, save_n_imgs: int, img_dir,
             print( f"Linf: {linf_mean:.4f}±{linf_std:.4f} [{linf_min:.4f}, {linf_max:.4f}]")
             # print( f"LPIPS: {lpips_mean:.4f}±{lpips_std:.4f} [{lpips_min:.4f}, {lpips_max:.4f}]")
         print(f'>>> Computing image distribution stats...')
-        fid = cached_fid(img_dir, img_dir_fid)
+        OVERWRITE = False  # FOR NOW
+        fid = cached_fid(img_dir, img_dir_fid, overwrite=OVERWRITE)
         print(f"FID watermark : {fid:.4f}")
-        fid_nw = cached_fid(img_dir_nw, img_dir_fid)
+        fid_nw = cached_fid(img_dir_nw, img_dir_fid, overwrite=OVERWRITE)
         print(f"FID vanilla   : {fid_nw:.4f}")
 
     if eval_bits:

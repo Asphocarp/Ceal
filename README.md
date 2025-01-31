@@ -87,6 +87,11 @@ CUDA_VISIBLE_DEVICES="3" python src/test.py test-after-gen \
     --eval_imgs False --eval_img2img False --eval_bits True \
     --num_imgs 6400 \
     --save_n_imgs 10
+CUDA_VISIBLE_DEVICES="3" python src/test.py test-after-gen \
+    --ckpt output_turbo/0106_160738/ckpt.pth \
+    --eval_imgs True --eval_img2img True --eval_bits True \
+    --img_dir_fid ../cache/val2014_512 \
+    --save_n_imgs 10 --num_imgs 3200
 
 # ---
 # LCM (only 768, see get_pipe_step_args; 13h)
@@ -101,6 +106,11 @@ CUDA_VISIBLE_DEVICES="1" python src/test.py gen \
     --save_in False \
     --save_z_res True \
     --save_w True
+CUDA_VISIBLE_DEVICES="3" python src/test.py test-after-gen \
+    --ckpt output_turbo/0130_033407/ckpt.pth \
+    --eval_imgs True --eval_img2img True --eval_bits True \
+    --img_dir_fid ../cache/val2014_768 \
+    --save_n_imgs 10 --num_imgs 3200
 
 # DiT
 python src/test.py gen \
@@ -115,6 +125,11 @@ python src/test.py gen \
     --save_in False \
     --save_z_res True \
     --save_w True
+CUDA_VISIBLE_DEVICES="3" python src/test.py test-after-gen \
+    --ckpt output_turbo/0127_082600/ckpt.pth \
+    --eval_imgs True --eval_img2img True --eval_bits True \
+    --img_dir_fid ../cache/imagenet512 \
+    --save_n_imgs 10 --num_imgs 3200
 
 # StyleGAN-XL (around 3h)
 CUDA_VISIBLE_DEVICES="3" python src/test.py gen \
