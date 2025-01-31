@@ -93,6 +93,28 @@ CUDA_VISIBLE_DEVICES="3" python src/test.py test-after-gen \
     --img_dir_fid ../cache/val2014_512 \
     --save_n_imgs 10 --num_imgs 3200
 
+# save 500 imgs
+CUDA_VISIBLE_DEVICES="3" python src/test.py test-after-gen \
+    --ckpt output_turbo/0106_160738/ckpt.pth \
+    --eval_imgs True --eval_img2img False --eval_bits False \
+    --img_dir_fid ../cache/val2014_512 \
+    --save_n_imgs 500 --num_imgs 3200
+CUDA_VISIBLE_DEVICES="3" python src/test.py test-after-gen \
+    --ckpt output_turbo/0130_033407/ckpt.pth \
+    --eval_imgs True --eval_img2img False --eval_bits False \
+    --img_dir_fid ../cache/val2014_512 \
+    --save_n_imgs 200 --num_imgs 64
+CUDA_VISIBLE_DEVICES="3" python src/test.py test-after-gen \
+    --ckpt output_turbo/0127_082600/ckpt.pth \
+    --eval_imgs True --eval_img2img False --eval_bits False \
+    --img_dir_fid ../cache/val2014_512 \
+    --save_n_imgs 200 --num_imgs 3200
+CUDA_VISIBLE_DEVICES="3" python src/test.py test-after-gen \
+    --ckpt output_turbo/0129_095122/ckpt.pth \
+    --eval_imgs True --eval_img2img False --eval_bits False \
+    --img_dir_fid ../cache/val2014_512 \
+    --save_n_imgs 200 --num_imgs 3200
+
 # ---
 # LCM (only 768, see get_pipe_step_args; 13h)
 CUDA_VISIBLE_DEVICES="1" python src/test.py gen \
