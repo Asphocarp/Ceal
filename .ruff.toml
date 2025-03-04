@@ -1,0 +1,13 @@
+indent-width = 4
+line-length = 160
+
+[lint]
+# D - Enable all `pydocstyle` rules, limiting to those that adhere to the Pep257 convention enabled via `convention = "pep257"` below
+select = ["E501", "I", "D"]
+ignore = ["D203","D204","D211","D212","D400","D406","D407","E266","C901"]
+
+[lint.pydocstyle]
+convention = "pep257"
+
+[lint.mccabe]
+max-complexity = 10

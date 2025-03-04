@@ -1,35 +1,67 @@
 #!/usr/bin/env python
+"""Train the mapping network"""
 # %%
 import os
 import sys
 import warnings
+
+# TODO: maybe turn your stylegan_xl (and pg_modules) folders into Python-installable packages (with a setup.py or pyproject.toml) and then do:
+# pip install -e /path/to/your/repo
 sys.path.insert(0, os.path.dirname(__file__))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'stylegan_xl'))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'stylegan_xl', 'pg_modules'))
-warnings.filterwarnings("ignore")
-
-from typing import *
-import utils_img
-import utils
-from torchvision.utils import save_image
-from torchvision import transforms
-import torch.nn.functional as F
-import torch
-from copy import deepcopy
-from loss.loss_provider import LossProvider
-import lpips
-from diffusers.models.vae import Decoder
-from diffusers.models.autoencoder_kl import AutoencoderKL
-from pathfinder import Pathfinder, Policy
 import argparse
-import wandb
-from torch import nn
-import numpy as np
-from tqdm import tqdm
-from mapper import MappingNetwork
-from PIL import Image
 import gc
+from copy import deepcopy
+from typing import (  # noqa: F401
+    Any,
+    Callable,
+    ClassVar,
+    Dict,
+    Final,
+    FrozenSet,
+    Generator,
+    Generic,
+    Iterable,
+    Iterator,
+    List,
+    Literal,
+    Mapping,
+    NoReturn,
+    Optional,
+    Protocol,
+    Sequence,
+    Set,
+    Tuple,
+    Type,
+    TypedDict,
+    TypeVar,
+    Union,
+    cast,
+    overload,
+)
+
+import lpips
+import numpy as np
+import torch
+import torch.nn.functional as F
+from PIL import Image
+from torch import nn
+from torchvision import transforms
+from torchvision.utils import save_image
+from tqdm import tqdm
+
 import misc
+import utils
+import utils_img
+import wandb
+from diffusers.models.autoencoder_kl import AutoencoderKL
+from diffusers.models.vae import Decoder
+from loss.loss_provider import LossProvider
+from mapper import MappingNetwork
+from pathfinder import Pathfinder, Policy
+
+warnings.filterwarnings("ignore")
 
 
 # %%==================== Config ====================
@@ -119,6 +151,7 @@ args, unknown = parser.parse_known_args()
 
 # >> rename
 def main(args):
+    """Train the mapping network"""
     CODENAME = args.codename
     ACC = args.acc
     SEED = args.seed
@@ -231,9 +264,9 @@ def main(args):
         pf.print_path()
         total_size = pf.init_model(decoder_tune)
     elif model_lib == 'gan':
-        from stylegan_xl import legacy, dnnlib
+        from stylegan_xl import dnnlib, legacy
         from stylegan_xl.torch_utils import gen_utils
-        from stylegan_xl.training.networks_stylegan3_resetting import SynthesisLayer, Generator, SynthesisInput, SynthesisNetwork
+        from stylegan_xl.training.networks_stylegan3_resetting import Generator, SynthesisInput, SynthesisLayer, SynthesisNetwork
         # load model
         with dnnlib.util.open_url(model_url) as f:
             G: Generator = legacy.load_network_pkl(f)['G_ema']
@@ -357,14 +390,14 @@ def main(args):
                 torch.jit.save(torchscript_m, EX_CKPT)
     elif EX_TYPE == 'random':
         # current: resnet50+normal_init_fc
-        from torchvision.models import resnet50, ResNet50_Weights
+        from torchvision.models import ResNet50_Weights, resnet50
         msg_decoder = resnet50(weights=ResNet50_Weights.IMAGENET1K_V2)
         msg_decoder.fc = torch.nn.Linear(2048,BIT_LENGTH)
         torch.nn.init.normal_(msg_decoder.fc.weight, mean=0, std=0.0275)
         # (as for bias, it is defaultly uniform inited)
         msg_decoder = msg_decoder.to(device)
     elif EX_TYPE == 'resnet':
-        from torchvision.models import resnet50, ResNet50_Weights
+        from torchvision.models import ResNet50_Weights, resnet50
         msg_decoder = resnet50(weights=ResNet50_Weights.IMAGENET1K_V2)
         msg_decoder.fc = torch.nn.Linear(2048,32)
         msg_decoder = msg_decoder.to(device)
@@ -674,7 +707,7 @@ def main(args):
                         'optimizer': optimizer.state_dict(),
                         'params': dict(CONF_DICT), }
                     if SAVE_ALL_CKPTS: accelerator.save(dict1, os.path.join(ODIR, f"ckpt_{step+1}.pth"))
-                    else: accelerator.save(dict1, os.path.join(ODIR, f"ckpt.pth"))
+                    else: accelerator.save(dict1, os.path.join(ODIR, "ckpt.pth"))
                 else:
                     dict1 = {
                         # 'decoder_tune': decoder_tune.state_dict(),
@@ -683,7 +716,7 @@ def main(args):
                         'optimizer': optimizer.state_dict(),
                         'params': dict(CONF_DICT), }
                     if SAVE_ALL_CKPTS: torch.save(dict1, os.path.join(ODIR, f"ckpt_{step+1}.pth"))
-                    else: torch.save(dict1, os.path.join(ODIR, f"ckpt.pth"))
+                    else: torch.save(dict1, os.path.join(ODIR, "ckpt.pth"))
 
     print("Averaged {} stats:".format('train'), metric_logger)
     # train_stats = {k: meter.global_avg for k, meter in metric_logger.meters.items()}
@@ -698,8 +731,11 @@ def val(
     IMG_SIZE, VAL_BATCH_SIZE, BIT_LENGTH, LOG_FREQ, USE_CACHED_LATENTS, TORCH_DTYPE,
     EX_CKPT, SAVE_IMG_FREQ, ODIR, 
 ):
+    """Validate"""
     vae_ori, decoder_tune = LOCALS.get('vae_ori', None), LOCALS.get('decoder_tune', None)
-    G, model_lib, gen_utils, centroids_path, class_idx, truncation_psi, Gargs = LOCALS.get('G', None), LOCALS.get('model_lib', None), LOCALS.get('gen_utils', None), LOCALS.get('centroids_path', None), LOCALS.get('class_idx', None), LOCALS.get('truncation_psi', None), LOCALS.get('Gargs', None)
+    G, model_lib, gen_utils, centroids_path, class_idx, truncation_psi, Gargs = LOCALS.get('G', None), LOCALS.get('model_lib', None), \
+        LOCALS.get('gen_utils', None), LOCALS.get('centroids_path', None), LOCALS.get('class_idx', None), \
+        LOCALS.get('truncation_psi', None), LOCALS.get('Gargs', None)
     header = 'Eval'
     metric_logger = utils.MetricLogger(delimiter="  ")
     sstamp_resize = transforms.Compose([ transforms.Resize(IMG_SIZE) ])  # for sstamp
@@ -775,7 +811,7 @@ def val(
                 diffMid = 128 + np.asarray(img_2).astype(int) - np.asarray(img_1).astype(int)
                 diffMid = Image.fromarray(diffMid.astype(np.uint8))
                 diffMid.save(diffMid_filename)
-            except: pass
+            except: pass  # noqa: E722
 
     print("Averaged {} stats:".format('eval'), metric_logger)
     val_stats = {k: meter.global_avg for k, meter in metric_logger.meters.items()}
