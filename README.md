@@ -36,8 +36,12 @@ mkdir -p ./imagenet-val-flat && find ./imagenet-val -type f -exec mv {} ./imagen
 ## Getting Started
 
 ```shell
-# train
+# train (2 GPU Hour RTX4090?)
 python scripts/train_mn.py -c 0
+
+
+
+
 
 # Turbo G-Normal-midHalf
 python src/test.py gen \
@@ -197,7 +201,8 @@ CUDA_VISIBLE_DEVICES="3" python src/test.py test-after-gen \
 
 
 
-## Log
+## Log of more experiments
+
 
 - dump_model_adv_act.py: dump all adv act from a model
 ```shell
