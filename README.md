@@ -1,6 +1,8 @@
 # Ceal
 
-## Env
+Ceal: Centralized Attribution of Generated Images via Adversarially Perturbing Weights
+
+## Prepare env
 
 1. Create a new environment named `ceal`.
 
@@ -35,9 +37,7 @@ unzip train2014.zip -d train2014
 curl -O http://images.cocodataset.org/zips/val2014.zip
 unzip val2014.zip -d val2014
 
-# download sdxl-turbo in ../cache/sdxl-turbo/
-
-# imagenet1k-val for fid
+# download imagenet1k-val for fid
 curl -L -o ../cache/imagenet1k-val.zip \
     https://www.kaggle.com/api/v1/datasets/download/titericz/imagenet1k-val
 mkdir -p ./imagenet-val-flat && find ./imagenet-val -type f -exec mv {} ./imagenet-val-flat/ \;
@@ -45,12 +45,12 @@ mkdir -p ./imagenet-val-flat && find ./imagenet-val -type f -exec mv {} ./imagen
 
 
 Note:
-Some weights are already available, including:
-- exemplary 48-bit extractor `pretrained/dec_48b_whit.torchscript.pt`
-- lpips-like loss functions `src/loss/losses/*.pth`
-(The same extractor can be usedfor all experiments. Still, if you want to use a different extractor, e.g. one supporting more bits, you can train one according to sec(TODO) and put it in `pretrained/`.)
+- Some weights are already available, including:
+    - exemplary 48-bit extractor `pretrained/dec_48b_whit.torchscript.pt`
+    (The same extractor can be used for all experiments. Still, if you want to use a different extractor, e.g. one supporting more bits, you can train one according to sec(TODO) and put it in `pretrained/`.)
+    - lpips-like loss functions `src/loss/losses/*.pth`
 
-Generative models will hopefully be automatically downloaded on-the-fly via `huggingface` (e.g. `stabilityai/sdxl-turbo`).
+- Generative models will hopefully be automatically downloaded on-the-fly via `huggingface` (e.g. `stabilityai/sdxl-turbo`).
 
 
 
@@ -65,15 +65,15 @@ Generative models will hopefully be automatically downloaded on-the-fly via `hug
 WANDB_MODE=disabled \
 python scripts/train_mn.py -c 0
 
-
 # train mapping network (2 GPU Hour RTX4090) with wandb logging
 python scripts/train_mn.py -c 0
 
-# TODO change model_id to test on more models (e.g. lcm-sdxl, DiT-XL-2-512, etc.)
+# TODO: change model_id to test on more models (e.g. lcm-sdxl, DiT-XL-2-512, etc.)
 ```
 
 ## Evaluate performance
 TODO
-
+## Train custom extractor
+TODO
 ## Train mapping network (with custom extractor)
 TODO
