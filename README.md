@@ -29,16 +29,17 @@ conda activate ceal
 2. Download datasets and generative models in `../cache/`.
 
 ```shell
-# download COCO in ../cache/train2014/ and ../cache/val2014/
-mkdir -p ../cache/train2014 ../cache/val2014
 cd ../cache
+
+# download COCO in train2014/ and val2014/
+mkdir -p train2014 val2014
 curl -O http://images.cocodataset.org/zips/train2014.zip
 unzip train2014.zip -d train2014
 curl -O http://images.cocodataset.org/zips/val2014.zip
 unzip val2014.zip -d val2014
 
 # download imagenet1k-val for fid
-curl -L -o ../cache/imagenet1k-val.zip \
+curl -L -o imagenet1k-val.zip \
     https://www.kaggle.com/api/v1/datasets/download/titericz/imagenet1k-val
 mkdir -p ./imagenet-val-flat && find ./imagenet-val -type f -exec mv {} ./imagenet-val-flat/ \;
 ```
