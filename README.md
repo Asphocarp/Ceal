@@ -57,7 +57,7 @@ Note:
 
 ## Train mapping network (with default extractor)
 
-- any launch-possible file accepts all args from cmd arguments / env variables (like WANDB_MODE)
+- accept all args from cmd args / env vars (like WANDB_MODE)
 - `-c` is the CUDA device id.
 
 ```shell
