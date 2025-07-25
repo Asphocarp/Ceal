@@ -17,6 +17,6 @@ gradio_cached_examples
 /output_ark
 /output_turbo
 /wandb
-/pretrained
 
 !/src/loss/losses/*.pth
+!/pretrained/dec_48b_whit.torchscript.pt

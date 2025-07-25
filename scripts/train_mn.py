@@ -73,7 +73,7 @@ command = f"""
 CUDA_VISIBLE_DEVICES={CUDA} python src/train.py \\
     --batch_size 4 \\
     --consi 1.75 \\
-    --model_id "../cache/sdxl-turbo" \\
+    --model_id "stabilityai/sdxl-turbo" \\
     --output_dir "output_turbo" \\
     --warmup_steps 0 \\
     --ex_type "hidden" \\
@@ -97,7 +97,7 @@ CUDA_VISIBLE_DEVICES={CUDA} python src/train.py \\
     --log_freq 10 \\
     --save_img_freq 50 \\
     --save_ckpt_freq 2000 \\
-    --local_files_only true \\
+    --local_files_only false \\
     --use_safetensors true \\
     --use_cached_latents false \\
     --granularity "kernel" \\
