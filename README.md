@@ -58,6 +58,7 @@ Note:
 ## Train mapping network (with default extractor)
 
 - any launch-possible file accepts all args from cmd arguments / env variables (like WANDB_MODE, CUDA_VISIBLE_DEVICES, etc.)
+- `-c` is the CUDA device id.
 
 ```shell
 # train mapping network (2 GPU Hour RTX4090) without wandb logging
