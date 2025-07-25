@@ -45,7 +45,7 @@ mkdir -p ./imagenet-val-flat && find ./imagenet-val -type f -exec mv {} ./imagen
 
 
 Note:
-- Some weights are already available, including:
+- Some weights are already available with the repo, including:
     - exemplary 48-bit extractor `pretrained/dec_48b_whit.torchscript.pt`
     (The same extractor can be used for all experiments. Still, if you want to use a different extractor, e.g. one supporting more bits, you can train one according to sec(TODO) and put it in `pretrained/`.)
     - lpips-like loss functions `src/loss/losses/*.pth`
